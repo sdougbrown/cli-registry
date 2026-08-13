@@ -12,7 +12,6 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
-	"syscall"
 	"time"
 
 	"github.com/sdougbrown/cli-registry/manifest"
@@ -463,7 +462,7 @@ func (t *tool) exec(ctx context.Context, argv []string, opts *callOptions) (*Res
 	cmd.Stderr = errW
 
 	// process group so we can kill descendants
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	setProcAttr(cmd)
 	start := time.Now()
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("start: %w", err)
@@ -477,7 +476,7 @@ func (t *tool) exec(ctx context.Context, argv []string, opts *callOptions) (*Res
 	timer := time.AfterFunc(timeout, func() {
 		// mark timed-out first, then kill the whole process group (descendants)
 		timedOut.Store(true)
-		syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		killProcessGroup(cmd)
 	})
 	waite := cmd.Wait()
 	timer.Stop()
@@ -485,7 +484,7 @@ func (t *tool) exec(ctx context.Context, argv []string, opts *callOptions) (*Res
 	// honor an already-cancelled caller context as a timeout as well
 	if ctx.Err() != nil {
 		timedOut.Store(true)
-		syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		killProcessGroup(cmd)
 	}
 
 	if timedOut.Load() {

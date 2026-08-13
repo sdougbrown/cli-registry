@@ -10,9 +10,10 @@ GOFMT     ?= mise exec -- gofmt
 # Provenance: umpire-spec release tarball (authoritative upstream pin).
 UMPIRE_SPEC_VERSION = v1.1.0-rc.2
 UMPIRE_SPEC_SHA256  = 560184f267e4224f00dd5bed8a6a66bcafdb906153c80699c0f074ec30144240
-# Fixed digest over the vendored conformance/ tree:
-#   find conformance -type f | sort | xargs cat | sha256sum
-FIXTURE_DIGEST      = 2ba6ae0055b2f1a9fea3a8fc6a14e618a9a2a1b36cfecd272a31f6583bfeab03
+# Fixed digest over the vendored conformance fixture data (index + fixtures +
+# failures; excludes local metadata like this README):
+#   cat conformance/index.json conformance/fixtures/* conformance/failures/* | sha256sum
+FIXTURE_DIGEST      = 5071576e907e549a96c04ef9c53f1efa335b753a0258a42eecb12b490ad3bd02
 
 .PHONY: test vet build fmtcheck tidycheck fixtures-verify verify
 
@@ -33,7 +34,7 @@ tidycheck:
 	@test -z "$$(git status --porcelain go.mod go.sum)"
 
 fixtures-verify:
-	@actual=$$(find conformance -type f | sort | xargs cat | sha256sum | awk '{print $$1}'); \
+	@actual=$$(cat conformance/index.json conformance/fixtures/* conformance/failures/* | sha256sum | awk '{print $$1}'); \
 	if [ "$$actual" != "$(FIXTURE_DIGEST)" ]; then \
 		echo "FIXTURE DIGEST MISMATCH: got $$actual, want $(FIXTURE_DIGEST)" >&2; exit 1; \
 	fi; \

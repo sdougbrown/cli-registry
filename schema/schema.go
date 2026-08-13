@@ -309,16 +309,20 @@ func compileOneOf(branches []any, defs map[string]any, visiting map[string]bool,
 	}
 	n.discKey = disc
 	// distinct discriminator consts
-	seen := map[any]bool{}
+	seen := map[string]bool{}
 	for _, b := range n.branches {
 		p, ok := b.properties[disc]
 		if !ok || !p.hasConst {
 			return n, append(issues, DefinitionIssue{Code: "invalidDiscriminator", Path: spath, Message: "missing discriminator const"})
 		}
-		if seen[p.constVal] {
+		scv, isString := p.constVal.(string)
+		if !isString {
+			return n, append(issues, DefinitionIssue{Code: "invalidDiscriminator", Path: spath, Message: "discriminator const must be a string"})
+		}
+		if seen[scv] {
 			return n, append(issues, DefinitionIssue{Code: "invalidDiscriminator", Path: spath, Message: "duplicate discriminator const"})
 		}
-		seen[p.constVal] = true
+		seen[scv] = true
 	}
 	return n, issues
 }
