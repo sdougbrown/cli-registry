@@ -1,0 +1,196 @@
+// Package cliregistry turns pre-registered CLI commands into typed tool calls.
+//
+// The public contract (types, invariants, thread-safety) is documented in
+// doc.go and specs/*.md. This file implements the registry surface: loading,
+// enumeration, calling, options, and typed errors.
+package cliregistry
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"sort"
+	"time"
+
+	"github.com/sdougbrown/cli-registry/manifest"
+	"github.com/sdougbrown/cli-registry/schema"
+)
+
+// StructuralIssue is re-exported from the schema package as the public issue
+// type (doc.go contract).
+type StructuralIssue = schema.StructuralIssue
+
+// LoadError indicates the registry could not be loaded (discovery, decode,
+// version, or duplicate-tool problems in the manifests).
+type LoadError struct {
+	Err error
+}
+
+func (e *LoadError) Error() string {
+	if e.Err == nil {
+		return "registry load failed"
+	}
+	return "registry load failed: " + e.Err.Error()
+}
+func (e *LoadError) Unwrap() error { return e.Err }
+
+// DefinitionError indicates a tool body failed to compile — unsupported schema
+// vocabulary, bad argv bindings, or an unresolvable command path.
+type DefinitionError struct {
+	Tool string
+	Err  error
+}
+
+func (e *DefinitionError) Error() string {
+	return fmt.Sprintf("tool %q definition: %v", e.Tool, e.Err)
+}
+func (e *DefinitionError) Unwrap() error { return e.Err }
+
+// ValidationError indicates the call args failed the tool's input schema. No
+// process was spawned.
+type ValidationError struct {
+	Tool   string
+	Issues []StructuralIssue
+}
+
+func (e *ValidationError) Error() string {
+	return fmt.Sprintf("tool %q validation failed (%d issue(s))", e.Tool, len(e.Issues))
+}
+
+// ExecError indicates the process ran to completion but exited outside the
+// tool's success exit codes.
+type ExecError struct {
+	Tool     string
+	Args     []string
+	ExitCode int
+	Stderr   []byte
+}
+
+func (e *ExecError) Error() string {
+	return fmt.Sprintf("tool %q exited %d: %s", e.Tool, e.ExitCode, string(e.Stderr))
+}
+
+// TimeoutError indicates the process exceeded its timeout and was terminated
+// (whole process group).
+type TimeoutError struct {
+	Tool   string
+	Args   []string
+	Timout time.Duration
+}
+
+func (e *TimeoutError) Error() string {
+	return fmt.Sprintf("tool %q timed out after %s", e.Tool, e.Timout)
+}
+
+// Registry is a compiled, immutable, thread-safe set of tools.
+type Registry struct {
+	tools map[string]*tool
+	order []string // deterministic tool name order
+}
+
+// Load reads every manifest reachable from paths and compiles the registry.
+// Every tool must compile; a single bad tool fails the whole load
+// (all-or-nothing).
+func Load(paths ...string) (*Registry, error) {
+	doc, err := manifest.Load(paths...)
+	if err != nil {
+		return nil, &LoadError{Err: err}
+	}
+	r := &Registry{tools: map[string]*tool{}}
+	for name := range doc.Tools {
+		if err := r.compileTool(doc, name); err != nil {
+			return nil, &DefinitionError{Tool: name, Err: err}
+		}
+	}
+	for name := range r.tools {
+		r.order = append(r.order, name)
+	}
+	sort.Strings(r.order)
+	return r, nil
+}
+
+// Tools returns the compiled tools in deterministic (name-sorted) order.
+func (r *Registry) Tools() []Tool {
+	out := make([]Tool, 0, len(r.order))
+	for _, name := range r.order {
+		t := r.tools[name]
+		out = append(out, Tool{
+			Name:        t.name,
+			Description: t.description,
+			InputSchema: t.inputSchemaRaw,
+		})
+	}
+	return out
+}
+
+// Lookup returns the compiled Tool for name, or (zero, false).
+func (r *Registry) Lookup(name string) (Tool, bool) {
+	t, ok := r.tools[name]
+	if !ok {
+		return Tool{}, false
+	}
+	return Tool{Name: t.name, Description: t.description, InputSchema: t.inputSchemaRaw}, true
+}
+
+// Call validates args against tool's schema, builds argv, spawns the command,
+// and returns the decoded result. Args that fail validation return a
+// *ValidationError before any process is spawned.
+func (r *Registry) Call(ctx context.Context, tool Tool, args map[string]any, opt ...Option) (*Result, error) {
+	t, ok := r.tools[tool.Name]
+	if !ok {
+		return nil, &LoadError{Err: fmt.Errorf("unknown tool %q", tool.Name)}
+	}
+	opts := defaultCallOptions()
+	for _, o := range opt {
+		o(&opts)
+	}
+
+	// validate before spawn
+	if issues := t.schema.Validate(args); len(issues) > 0 {
+		return nil, &ValidationError{Tool: t.name, Issues: issues}
+	}
+
+	argv, err := t.buildArgv(args, &opts)
+	if err != nil {
+		return nil, &DefinitionError{Tool: t.name, Err: err}
+	}
+
+	return t.exec(ctx, argv, &opts)
+}
+
+// Result is the decoded outcome of a tool call.
+type Result struct {
+	Stdout    []byte
+	Stderr    []byte
+	Truncated bool
+	ExitCode  int
+	Decoded   any
+	Duration  time.Duration
+}
+
+// Option configures a single call.
+type Option func(*callOptions)
+
+type callOptions struct {
+	cwd     string // requested cwd ("" = manifest-scoped/inherit)
+	timeout time.Duration
+	env     map[string]string // extra, overriding declared defaults
+}
+
+func defaultCallOptions() callOptions {
+	return callOptions{env: map[string]string{}}
+}
+
+// WithCWD requests a working directory for the call. In "allow" cwd mode the
+// requested path must fall within the tool's allowed roots, else the call
+// fails.
+func WithCWD(dir string) Option { return func(o *callOptions) { o.cwd = dir } }
+
+// WithTimeout overrides the tool's default timeout for a single call.
+func WithTimeout(d time.Duration) Option { return func(o *callOptions) { o.timeout = d } }
+
+// WithEnv adds or overrides declared environment variables for a single call.
+func WithEnv(k, v string) Option { return func(o *callOptions) { o.env[k] = v } }
+
+// IsTimeout reports whether err is a *TimeoutError (errors.Is-aware helper).
+func IsTimeout(err error) bool { var te *TimeoutError; return errors.As(err, &te) }
