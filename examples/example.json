@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "tools": {
+    "say": {
+      "description": "print a message (demo of a positional binding)",
+      "command": ["echo"],
+      "timeout": "10s",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "message": { "type": "string" }
+        },
+        "additionalProperties": false,
+        "required": ["message"]
+      },
+      "bindings": [
+        { "property": "message", "style": "positional" }
+      ],
+      "output": { "mode": "raw" }
+    },
+    "now": {
+      "description": "print the current Unix timestamp (demo of raw output)",
+      "command": ["date", "+%s"],
+      "timeout": "10s",
+      "inputSchema": { "type": "object", "properties": {}, "additionalProperties": false },
+      "output": { "mode": "raw" }
+    }
+  }
+}
