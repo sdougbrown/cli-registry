@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "tools": {
+    "tighten-lint": {
+      "description": "Run writetighter's deterministic prose lint on a file (requires writetighter on PATH).",
+      "command": ["writetighter", "lint"],
+      "timeout": "60s",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "path": { "type": "string", "description": "file to lint" },
+          "kind": {
+            "type": "string",
+            "enum": ["pr", "procedure", "description", "code-comment", "reference", "decision", "incident", "agent-instruction", "status-update"]
+          }
+        },
+        "additionalProperties": false,
+        "required": ["path"]
+      },
+      "bindings": [
+        { "property": "path", "style": "positional" },
+        { "property": "kind", "style": "space", "flag": "--kind" }
+      ],
+      "output": { "mode": "raw" }
+    }
+  }
+}

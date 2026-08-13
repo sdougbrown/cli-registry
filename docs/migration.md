@@ -15,9 +15,7 @@ skill whose body is really "run this command with these args":
 3. Point the harness at the registry (`CLI_REGISTRY=<dir>`) instead of mounting
    a skill file.
 
-Notice what goes away: no "how to construct the flag" prose, no fragile shell
-spelling — the model only picks argument values, and `cli-registry` owns
-validation + argv.
+This migration removes the prose that spells out how to construct flags and eliminates errors from manual shell syntax. The model now only selects argument values; `cli-registry` owns validation and argv construction.
 
 ## From a hand-rolled MCP server
 

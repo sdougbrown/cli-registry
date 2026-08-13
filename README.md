@@ -6,14 +6,14 @@ A **registered CLI** is a small manifest describing a real command-line
 interface—argv, flags, and an input JSON Schema. `cli-registry` compiles it into
 a standard tool, validates arguments against the schema before spawning,
 executes the command through a bounded process engine, and decodes the result.
-Adding a tool is a data file, not a rebuild.
+A tool is a data file, not a rebuild.
 
 ## Why
 
-Injecting functionality into a harness is normally a fork:
+Adding features to a harness normally requires one of two approaches:
 
 - **Skill file** — prose the model reads and improvises from (fragile).
-- **MCP server** — a live JSON-RPC process for what is often a shell command.
+- **MCP server** — a live Model Context Protocol (MCP) JSON-RPC process for what is often a shell command.
 
 `cli-registry` is the third thing: **tools-as-data**. A manifest is compiled to a
 standard MCP tool descriptor; anything that already runs processes can consume
@@ -28,6 +28,8 @@ cli-registry validate examples/example.json
 # call a tool
 cli-registry run -registry examples/example.json say '{"message":"hello"}'
 ```
+
+`examples/writetighter.json` registers a real tool — `writetighter`'s deterministic `lint` — so you can watch a genuine CLI (positional arg, `--kind` flag, enum) flow through the pipeline.
 
 Subscribe as an MCP server:
 
