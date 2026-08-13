@@ -29,7 +29,8 @@ fmtcheck:
 	@test -z "$$($(GOFMT) -l .)"
 
 tidycheck:
-	@$(GO) mod tidy && git diff --exit-code go.mod go.sum
+	@$(GO) mod tidy
+	@test -z "$$(git status --porcelain go.mod go.sum)"
 
 fixtures-verify:
 	@actual=$$(find conformance -type f | sort | xargs cat | sha256sum | awk '{print $$1}'); \
