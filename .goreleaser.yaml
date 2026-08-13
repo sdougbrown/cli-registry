@@ -1,0 +1,83 @@
+# yaml-language-server: $schema=https://goreleaser.com/static/schema.json
+version: 2
+
+project_name: cli-registry
+
+before:
+  hooks:
+    - go mod tidy
+    - go test ./...
+
+builds:
+  - id: cli-registry
+    binary: cli-registry
+    main: ./cmd/cli-registry
+    env:
+      - CGO_ENABLED=0
+    ldflags:
+      - -s -w -X github.com/sdougbrown/cli-registry/internal/app.Commit={{.Commit}} -X github.com/sdougbrown/cli-registry/internal/app.Version={{.Version}}
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ignore:
+      - goos: windows
+        goarch: arm64
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+  - id: cli-registry-mcp
+    binary: cli-registry-mcp
+    main: ./cmd/cli-registry-mcp
+    env:
+      - CGO_ENABLED=0
+    ldflags:
+      - -s -w -X github.com/sdougbrown/cli-registry/internal/app.Commit={{.Commit}} -X github.com/sdougbrown/cli-registry/internal/app.Version={{.Version}}
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ignore:
+      - goos: windows
+        goarch: arm64
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+archives:
+  - id: cli-registry
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    name_template: >-
+      {{ .ProjectName }}_
+      {{- title .Os }}_
+      {{- if eq .Arch "amd64" }}x86_64
+      {{- else }}{{ .Arch }}{{ end }}
+    files:
+      - README.md
+      - LICENSE
+
+checksum:
+  name_template: "checksums.txt"
+
+snapshot:
+  version_template: "{{ .Version }}-SNAPSHOT-{{ .ShortCommit }}"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+      - Merge pull request
+      - Merge branch
+
+release:
+  draft: false
+  prerelease: auto

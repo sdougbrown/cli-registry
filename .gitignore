@@ -1,0 +1,17 @@
+# Binaries
+/cli-registry
+/cli-registry-mcp
+/dist/
+
+# Build/test caches
+/.cache/
+*.test
+*.out
+
+# Editors / OS
+.idea/
+.vscode/
+.DS_Store
+
+# Mise/Go
+.mise/

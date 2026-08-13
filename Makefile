@@ -1,0 +1,41 @@
+# cli-registry
+#
+# Build/test/fixtures. Local commands must run through the mise Go 1.25
+# toolchain (system `go` on this machine is 1.22.2 and must not be used).
+
+GO        ?= mise exec -- go
+GOFMT     ?= mise exec -- gofmt
+
+# Umpire JSON-Schema profile conformance fixtures (vendored under conformance/).
+# Provenance: umpire-spec release tarball (authoritative upstream pin).
+UMPIRE_SPEC_VERSION = v1.1.0-rc.2
+UMPIRE_SPEC_SHA256  = 560184f267e4224f00dd5bed8a6a66bcafdb906153c80699c0f074ec30144240
+# Fixed digest over the vendored conformance/ tree:
+#   find conformance -type f | sort | xargs cat | sha256sum
+FIXTURE_DIGEST      = 2ba6ae0055b2f1a9fea3a8fc6a14e618a9a2a1b36cfecd272a31f6583bfeab03
+
+.PHONY: test vet build fmtcheck tidycheck fixtures-verify verify
+
+test:
+	$(GO) test ./...
+
+vet:
+	$(GO) vet ./...
+
+build:
+	$(GO) build ./...
+
+fmtcheck:
+	@test -z "$$($(GOFMT) -l .)"
+
+tidycheck:
+	@$(GO) mod tidy && git diff --exit-code go.mod go.sum
+
+fixtures-verify:
+	@actual=$$(find conformance -type f | sort | xargs cat | sha256sum | awk '{print $$1}'); \
+	if [ "$$actual" != "$(FIXTURE_DIGEST)" ]; then \
+		echo "FIXTURE DIGEST MISMATCH: got $$actual, want $(FIXTURE_DIGEST)" >&2; exit 1; \
+	fi; \
+	echo "conformance fixtures ok ($${UMPIRE_SPEC_VERSION:-$(UMPIRE_SPEC_VERSION)})"
+
+verify: test vet build fmtcheck tidycheck fixtures-verify
