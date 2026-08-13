@@ -79,8 +79,8 @@ func TestExplicitNullFailsType(t *testing.T) {
 	}
 	// workflowType declared as string; explicit null must fail with type
 	values := map[string]any{
-		"nodes": []any{"x"},
-		"title": "t",
+		"nodes":        []any{"x"},
+		"title":        "t",
 		"workflowType": nil,
 	}
 	issues := vs.Validate(values)

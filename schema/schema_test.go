@@ -76,8 +76,8 @@ func TestRejectUnknownDef(t *testing.T) {
 func TestRejectAnyOfPatternFormat(t *testing.T) {
 	for _, kw := range []string{"anyOf", "pattern", "format", "multipleOf", "uniqueItems", "not"} {
 		raw := map[string]any{
-			"type": "object",
-			"properties": map[string]any{"x": map[string]any{"type": "string", kw: "zzz"}},
+			"type":                 "object",
+			"properties":           map[string]any{"x": map[string]any{"type": "string", kw: "zzz"}},
 			"additionalProperties": false,
 		}
 		if _, err := Compile(raw); err == nil {
@@ -106,8 +106,8 @@ func TestBasicTypesAndConstraints(t *testing.T) {
 			"name":  map[string]any{"type": "string", "minLength": float64(2)},
 			"tags":  map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "maxItems": 3.0},
 		},
-		"required":               []any{"count"},
-		"additionalProperties":   false,
+		"required":             []any{"count"},
+		"additionalProperties": false,
 	})
 	assertIssue(t, vs, map[string]any{"count": 9}, "maximum", "/count")
 	assertIssue(t, vs, map[string]any{"count": 0}, "minimum", "/count")

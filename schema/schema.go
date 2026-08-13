@@ -22,17 +22,17 @@ import (
 // cross-runtime fields are Code and Path (RFC 6901 pointer into the value);
 // Source is always "json-schema". Messages are not normative.
 type StructuralIssue struct {
-	Source string
-	Code   string
-	Path   string
+	Source  string
+	Code    string
+	Path    string
 	Message string
 }
 
 // DefinitionIssue is a schema-definition problem (unsupported keyword, bad or
 // cyclic reference, invalid tagged union).
 type DefinitionIssue struct {
-	Code   string
-	Path   string // RFC 6901 pointer into the schema document
+	Code    string
+	Path    string // RFC 6901 pointer into the schema document
 	Message string
 }
 
@@ -114,10 +114,10 @@ type node struct {
 	minLen   *int
 	maxLen   *int
 
-	min    *float64
-	max    *float64
-	exMin  *float64
-	exMax  *float64
+	min   *float64
+	max   *float64
+	exMin *float64
+	exMax *float64
 
 	items    *node
 	minItems *int
@@ -126,7 +126,7 @@ type node struct {
 	properties map[string]*node
 	required   []string
 
-	discKey string // tagged oneOf discriminator property
+	discKey  string // tagged oneOf discriminator property
 	branches []*node
 }
 
