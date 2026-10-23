@@ -86,8 +86,9 @@ session's working directory, its own cancellation and process reaping — splits
 that into `Plan`, its own run, and `Finish`:
 
 ```go
-// cliregistry.WithCWD(dir) is for a tool whose manifest sets cwd.mode: allow;
-// it is validated against the allowed roots and resolved to an absolute path.
+// cliregistry.WithCWD(dir) is resolved to an absolute path. Under cwd.mode:
+// allow it is checked against the allowed roots; a tool with no allow scope
+// leaves the directory to the host, so the request is taken as given.
 p, err := reg.Plan(tool, args)
 if err != nil {
     return err // *cliregistry.ValidationError: nothing was built

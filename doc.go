@@ -36,8 +36,9 @@
 // scrubbed environment, a session working directory, its own cancellation and
 // process reaping — uses Plan and Finish instead and runs the argv itself:
 //
-//	// WithCWD(dir) is for a tool whose manifest sets cwd.mode: allow; it is
-//	// validated against the allowed roots and resolved to an absolute path.
+//	// WithCWD(dir) is resolved to an absolute path. Under cwd.mode: allow it
+//	// is checked against the allowed roots; a tool with no allow scope leaves
+//	// the directory to the host, so the request is taken as given.
 //	p, err := reg.Plan(tool, args)
 //	if err != nil { ... }                       // *ValidationError: nothing built
 //	env, err := p.ResolveEnv(scrubbedLookup)    // resolve env:NAME against the host's view
