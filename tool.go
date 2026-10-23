@@ -327,7 +327,6 @@ func (t *tool) appendBinding(argv []string, b binding, v any, first bool) ([]str
 			return argv, first, nil
 		}
 		if arr, ok := v.([]any); ok {
-			argv = append(argv, b.flag)
 			for _, el := range arr {
 				argv = append(argv, b.flag, encodeScalar(el))
 			}

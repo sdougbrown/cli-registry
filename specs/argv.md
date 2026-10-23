@@ -33,7 +33,7 @@ Let `v` be the validated value for a bound property and `s` its schema type.
 ### `space` (flag then separate value)
 - scalar: append `--flag`, then `<value>`
 - boolean `true`: append `--flag`; `false`: emit nothing
-- array: append `--flag`, then each element on its own; `--flag` shown only once
+- array: one `--flag <element>` pair per element; an empty array emits nothing
 - object/other: **rejected at compile time**
 
 ### `short` (single-dash)

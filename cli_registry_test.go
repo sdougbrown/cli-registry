@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -28,6 +29,18 @@ func TestHelperProcess(t *testing.T) {
 	if m := os.Getenv("FAKE_MARKER"); m != "" {
 		os.WriteFile(m, []byte("marker"), 0o644)
 	}
+	if p := os.Getenv("FAKE_RECORD_PID"); p != "" {
+		os.WriteFile(p, []byte(strconv.Itoa(os.Getpid())), 0o644)
+	}
+	if mode := os.Getenv("FAKE_DESCENDANT"); mode != "" {
+		spawnFixtureDescendant(mode)
+	}
+	if s := os.Getenv("FAKE_STDOUT"); s != "" {
+		fmt.Print(s)
+	}
+	if s := os.Getenv("FAKE_STDERR"); s != "" {
+		fmt.Fprint(os.Stderr, s)
+	}
 	if s := os.Getenv("FAKE_SLEEP"); s != "" {
 		d, _ := time.ParseDuration(s)
 		time.Sleep(d)
@@ -45,12 +58,42 @@ func TestHelperProcess(t *testing.T) {
 	case "args":
 		b, _ := json.Marshal(rest)
 		fmt.Println(string(b))
+	case "probe":
+		probe := map[string]any{"args": os.Args[1:], "env": environMap()}
+		probe["dir"], _ = os.Getwd()
+		json.NewEncoder(os.Stdout).Encode(probe)
 	case "env":
 		fmt.Println(os.Getenv("FAKE_ECHO_OUT"))
 	default:
 		fmt.Println("hello")
 	}
 	os.Exit(0)
+}
+
+// spawnFixtureDescendant starts a long-lived child in the fixture's process
+// group. "bg" gives it the null device (it holds no capture pipe); "pipe"
+// hands it the inherited stdout/stderr so it keeps the capture pipes open.
+func spawnFixtureDescendant(mode string) {
+	c := exec.Command("sleep", "60")
+	if mode == "pipe" {
+		c.Stdout = os.Stdout
+		c.Stderr = os.Stderr
+	}
+	if err := c.Start(); err != nil {
+		return
+	}
+	if p := os.Getenv("FAKE_DESCENDANT_PID"); p != "" {
+		os.WriteFile(p, []byte(strconv.Itoa(c.Process.Pid)), 0o644)
+	}
+}
+
+func environMap() map[string]string {
+	m := map[string]string{}
+	for _, kv := range os.Environ() {
+		k, v, _ := strings.Cut(kv, "=")
+		m[k] = v
+	}
+	return m
 }
 
 func indexAfter(args []string, tok string) int {
