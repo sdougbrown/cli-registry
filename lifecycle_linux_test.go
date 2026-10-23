@@ -73,7 +73,7 @@ func escaperRegistry(t *testing.T, mode string) (*Registry, Tool, string) {
 	t.Helper()
 	becomeSubreaper(t)
 	ready := filepath.Join(t.TempDir(), "escaped.pid")
-	r := fixtureRegistry(t, map[string]fixtureDef{"escape": {env: map[string]string{"ESCAPER_MODE": mode, "ESCAPER_READY": ready}, timeout: "10s"}})
+	r := fixtureRegistry(t, map[string]fixtureDef{"escape": {env: map[string]string{"ESCAPER_MODE": mode, "ESCAPER_READY": ready, "GORACE": "atexit_sleep_ms=0"}, timeout: "10s"}})
 	r.tools["escape"].command[1] = "-test.run=^TestEscaperProcess$"
 	t.Cleanup(func() {
 		data, err := os.ReadFile(ready)

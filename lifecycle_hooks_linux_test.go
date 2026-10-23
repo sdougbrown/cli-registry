@@ -21,8 +21,8 @@ import (
 
 func TestTimeoutCausePublishedBeforeReturn(t *testing.T) {
 	killed, release, finished := make(chan struct{}), make(chan struct{}), make(chan struct{})
-	hookAfterTimerSignal = func() { close(killed); <-release; close(finished) }
-	defer func() { hookAfterTimerSignal = func() {} }()
+	setTestHooks(&hooks{afterTimerSignal: func() { close(killed); <-release; close(finished) }})
+	defer setTestHooks(nil)
 	r := fixtureRegistry(t, map[string]fixtureDef{"slow": {env: map[string]string{"GO_WANT_HELPER_PROCESS": "1", "FAKE_SLEEP": "60s"}, timeout: "50ms"}})
 	done := make(chan error, 1)
 	go func() { _, err := r.Call(context.Background(), mustTool(t, r, "slow"), map[string]any{}); done <- err }()
@@ -48,8 +48,8 @@ func TestTimeoutCausePublishedBeforeReturn(t *testing.T) {
 
 func TestCancelCausePublishedBeforeReturn(t *testing.T) {
 	killed, release, finished := make(chan struct{}), make(chan struct{}), make(chan struct{})
-	hookAfterCancelSignal = func() { close(killed); <-release; close(finished) }
-	defer func() { hookAfterCancelSignal = func() {} }()
+	setTestHooks(&hooks{afterCancelSignal: func() { close(killed); <-release; close(finished) }})
+	defer setTestHooks(nil)
 	r := fixtureRegistry(t, map[string]fixtureDef{"slow": {env: map[string]string{"GO_WANT_HELPER_PROCESS": "1", "FAKE_SLEEP": "60s"}, timeout: "60s"}})
 	pidFile := filepath.Join(t.TempDir(), "leader.pid")
 	ctx, cancel := context.WithCancel(context.Background())
@@ -86,19 +86,21 @@ func TestNoSignalOnAlreadyReleasedIdentity(t *testing.T) {
 	defer cancel()
 	var afterWait atomic.Bool
 	var staleSignals atomic.Int32
-	hookBeforeGroupSignal = func(cmd *exec.Cmd) {
-		if !afterWait.Load() {
-			return
-		}
-		if _, err := os.Stat(fmt.Sprintf("/proc/%d", cmd.Process.Pid)); os.IsNotExist(err) {
-			staleSignals.Add(1)
-		}
-	}
-	hookAfterWait = func(*exec.Cmd) {
-		afterWait.Store(true)
-		cancel()
-	}
-	defer func() { hookBeforeGroupSignal = func(*exec.Cmd) {}; hookAfterWait = func(*exec.Cmd) {} }()
+	setTestHooks(&hooks{
+		beforeGroupSignal: func(cmd *exec.Cmd) {
+			if !afterWait.Load() {
+				return
+			}
+			if _, err := os.Stat(fmt.Sprintf("/proc/%d", cmd.Process.Pid)); os.IsNotExist(err) {
+				staleSignals.Add(1)
+			}
+		},
+		afterWait: func(*exec.Cmd) {
+			afterWait.Store(true)
+			cancel()
+		},
+	})
+	defer setTestHooks(nil)
 	r := fixtureRegistry(t, map[string]fixtureDef{"quick": {env: map[string]string{"GO_WANT_HELPER_PROCESS": "1", "FAKE_OUTPUT": "quiet", "GORACE": "atexit_sleep_ms=0"}, timeout: "60s"}})
 	_, err := r.Call(ctx, mustTool(t, r, "quick"), map[string]any{})
 	if staleSignals.Load() != 0 {
