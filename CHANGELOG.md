@@ -40,7 +40,9 @@ library's, and makes the library's own execution stop, reap and report.
 - After any exit the rest of the process group is killed, so same-group
   descendants no longer survive a normal exit.
 - A descendant that holds the capture pipes no longer turns a normal exit into
-  a timeout; the pipe drain is bounded instead.
+  a timeout; the pipe drain is bounded instead. A drain cut at that bound, like
+  a failed capture read, sets `Truncated`, so a short stream is never reported
+  as complete output.
 - A context that has ended — cancelled, or already past its deadline when the
   call starts — kills the process group and returns `*TimeoutError`, the type
   v0.1.0 returned, with `Cause` set to `ctx.Err()`; `IsTimeout` stays true for

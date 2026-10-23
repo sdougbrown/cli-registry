@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strconv"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -140,5 +141,24 @@ func TestRepeatedCallsDoNotLeakFDsOrGoroutines(t *testing.T) {
 	time.Sleep(20 * time.Millisecond)
 	if afterGoroutines := runtime.NumGoroutine(); afterGoroutines > beforeGoroutines+1 {
 		t.Fatalf("goroutines grew from %d to %d", beforeGoroutines, afterGoroutines)
+	}
+}
+
+// A drain cut at the deadline reports truncation: the escaped descendant still
+// holds the capture pipe and will write after the call returned, so the bytes
+// the call did capture are a prefix, not the whole stream.
+func TestBoundedDrainMarksTruncation(t *testing.T) {
+	r, tool, _ := escaperRegistry(t, "leader-exit")
+	start := time.Now()
+	res, err := r.Call(context.Background(), tool, map[string]any{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("Call returned in %s: stdout=%q truncated=%v", time.Since(start), res.Stdout, res.Truncated)
+	if strings.Contains(string(res.Stdout), "late-tail") {
+		t.Fatal("the escaped descendant's tail was captured after the call")
+	}
+	if !res.Truncated {
+		t.Fatal("a bounded drain cut a still-open stream but reports complete output")
 	}
 }

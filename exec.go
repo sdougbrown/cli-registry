@@ -37,6 +37,7 @@ import (
 	"os"
 	"os/exec"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -47,7 +48,7 @@ const (
 	// close after an ordinary exit or a timeout. A same-group descendant is
 	// killed, which closes its inherited pipes; only a descendant that left the
 	// process group (setsid) can still hold them, and its output is cut rather
-	// than blocking the call.
+	// than blocking the call. A cut drain marks the output truncated.
 	drainGrace = 500 * time.Millisecond
 )
 
@@ -196,10 +197,23 @@ func (p *Plan) run(ctx context.Context) (*Result, error) {
 	outW.Close()
 	errW.Close()
 
+	// A capture read that fails — including the forced close below — means the
+	// bytes are not the whole of what the process wrote.
+	var readFailed atomic.Bool
 	var copies sync.WaitGroup
 	copies.Add(2)
-	go func() { defer copies.Done(); io.Copy(stdout, outR) }()
-	go func() { defer copies.Done(); io.Copy(stderr, errR) }()
+	go func() {
+		defer copies.Done()
+		if _, err := io.Copy(stdout, outR); err != nil {
+			readFailed.Store(true)
+		}
+	}()
+	go func() {
+		defer copies.Done()
+		if _, err := io.Copy(stderr, errR); err != nil {
+			readFailed.Store(true)
+		}
+	}()
 
 	ex := &executor{cmd: cmd}
 
@@ -247,11 +261,13 @@ func (p *Plan) run(ctx context.Context) (*Result, error) {
 	grace := drainGrace
 	drained := make(chan struct{})
 	go func() { copies.Wait(); close(drained) }()
+	cut := false
 	select {
 	case <-drained:
 	case <-time.After(grace):
 		// A descendant that escaped the group still holds a pipe: cut the
 		// capture instead of stalling the call, then let the copies finish.
+		cut = true
 		outR.Close()
 		errR.Close()
 		<-drained
@@ -260,9 +276,11 @@ func (p *Plan) run(ctx context.Context) (*Result, error) {
 	errR.Close()
 
 	out := Output{
-		Stdout:    stdout.Bytes(),
-		Stderr:    stderr.Bytes(),
-		Truncated: stdout.Truncated() || stderr.Truncated(),
+		Stdout: stdout.Bytes(),
+		Stderr: stderr.Bytes(),
+		// Output cut by the engine is not complete output: a host must be able
+		// to tell a short stream from a prefix the engine deliberately dropped.
+		Truncated: stdout.Truncated() || stderr.Truncated() || cut || readFailed.Load(),
 		Duration:  time.Since(start),
 	}
 	switch cause {
