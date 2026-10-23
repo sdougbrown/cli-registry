@@ -84,6 +84,12 @@ library's, and makes the library's own execution stop, reap and report.
   `IsCanceled` reports the context cause. The Linux path kills the group; the
   reap-first fallback stops only the leader. An already-ended context returns
   without spawning a process.
+- A manifest `timeout` that is zero or negative is now an error at load
+  (`invalid timeout "0s": must be positive`, reported as a
+  `*DefinitionError`), instead of loading a tool that never times out. v0.1.0
+  armed the watchdog unconditionally, so such a manifest returned a
+  `*TimeoutError` at once; the new build refuses it before any call. A
+  non-positive `WithTimeout` override is still ignored, as in v0.1.0.
 
 ### Fixed
 

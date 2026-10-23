@@ -292,6 +292,33 @@ func TestTimeoutError(t *testing.T) {
 	}
 }
 
+// A non-positive manifest timeout would arm no watchdog, so the tool could
+// never time out; it is refused when the manifest is compiled. v0.1.0 armed a
+// zero timer instead, which fired at once.
+func TestNonPositiveTimeoutIsRejectedAtLoad(t *testing.T) {
+	for _, timeout := range []string{"0s", "-1s"} {
+		t.Run(timeout, func(t *testing.T) {
+			m := fmt.Sprintf(`{"version":1,"tools":{"t":{
+				"description":"non-positive timeout","command":[%s,"-test.run=TestHelperProcess","--"],
+				"timeout":%s,
+				"inputSchema":{"type":"object","properties":{},"additionalProperties":false}
+			}}}`, js(helperBin(t)), js(timeout))
+			p := filepath.Join(t.TempDir(), "tools.json")
+			if err := os.WriteFile(p, []byte(m), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			_, err := Load(p)
+			var de *DefinitionError
+			if !errors.As(err, &de) {
+				t.Fatalf("Load with timeout %q = %T (%v), want *DefinitionError", timeout, err, err)
+			}
+			if msg := err.Error(); !strings.Contains(msg, timeout) || !strings.Contains(msg, "must be positive") {
+				t.Fatalf("error %q does not name the timeout %q and the rule it broke", msg, timeout)
+			}
+		})
+	}
+}
+
 func TestInvalidArgsDoNotSpawn(t *testing.T) {
 	r := writeToolRegistry(t)
 	dir := t.TempDir()

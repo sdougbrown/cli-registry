@@ -110,6 +110,9 @@ func (r *Registry) compileTool(doc *manifest.Document, name string) error {
 		if err != nil {
 			return fmt.Errorf("invalid timeout %q: %w", def.Timeout, err)
 		}
+		if d <= 0 {
+			return fmt.Errorf("invalid timeout %q: must be positive", def.Timeout)
+		}
 		t.timeout = d
 	} else {
 		t.timeout = 30 * time.Second // mandatory-safe default
