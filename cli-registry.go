@@ -204,7 +204,9 @@ func defaultCallOptions() callOptions {
 
 // WithCWD requests a working directory for the call. In "allow" cwd mode the
 // requested path must fall within the tool's allowed roots, else the call
-// fails.
+// fails. A tool without an allow scope leaves the working directory to the
+// host, so a request for one is accepted as given. Either way Plan resolves it
+// to an absolute path with symlinks resolved and reports it as Plan.Dir.
 func WithCWD(dir string) Option { return func(o *callOptions) { o.cwd = dir } }
 
 // WithTimeout overrides the tool's default timeout for a single call.

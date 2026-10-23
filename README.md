@@ -86,7 +86,9 @@ session's working directory, its own cancellation and process reaping — splits
 that into `Plan`, its own run, and `Finish`:
 
 ```go
-p, err := reg.Plan(tool, args, cliregistry.WithCWD(sessionDir))
+// cliregistry.WithCWD(dir) is for a tool whose manifest sets cwd.mode: allow;
+// it is validated against the allowed roots and resolved to an absolute path.
+p, err := reg.Plan(tool, args)
 if err != nil {
     return err // *cliregistry.ValidationError: nothing was built
 }
@@ -94,18 +96,35 @@ env, err := p.ResolveEnv(scrubbedLookup) // resolve `env:NAME` against the host'
 if err != nil {
     return err
 }
-out := executor.Run(ctx, p.Argv, env, p.Dir, p.Timeout) // your argv, env, cwd, lifetime
-res, err := p.Finish(out)                              // classifies exactly like Call
+dir := p.Dir
+if dir == "" {
+    dir = sessionDir // the manifest left the directory to the host
+}
+out, err := executor.Run(ctx, p.Argv, env, dir, p.Timeout) // your argv, env, cwd, lifetime
+if err != nil {
+    return err // the executor's own cancel, timeout or start error
+}
+res, err := p.Finish(out) // classifies exactly like Call
 ```
 
 `Plan` touches no process and reads no environment, so an `env:NAME` reference
 resolves against whatever environment the host passes to `ResolveEnv`, not the
 process environment. `BenignEnv` lists the variables `Call` copies by default.
-`Finish` applies the tool's success exit codes and output decoding, and
-returns `*cliregistry.ExecError` for a run outside them.
+A fixed `Plan.Dir` is absolute with symlinks resolved, so an executor with its
+own session base runs in the directory `Plan` validated; an empty one means the
+manifest left the choice to the host.
+
+`Finish` classifies a completed run: it applies the tool's success exit codes
+and output decoding, and returns `*cliregistry.ExecError` for a run outside
+them. It does not know why a process ended, so branch on the executor's own
+cancel, timeout and start errors before calling it — the same killed-process
+output is a `*cliregistry.TimeoutError` through `Call` and an `*ExecError`
+through `Finish`.
 
 `Call` runs that same plan with the library's own engine:
 
+- the child runs in its own process group, with stdin closed and both streams
+  captured up to 1 MiB each;
 - a cancelled context kills the process group within milliseconds and returns
   `*cliregistry.TimeoutError` with `Cause` set to `ctx.Err()` (as v0.1.0
   classified it); `IsTimeout` stays true, and `IsCanceled` — or `errors.Is`
@@ -113,11 +132,24 @@ returns `*cliregistry.ExecError` for a run outside them.
   context cause;
 - the plan's own timeout kills the group and returns
   `*cliregistry.TimeoutError` with a nil `Cause` (`IsTimeout`);
-- every exit kills the rest of the process group, so descendants do not
-  outlive the call, and a descendant holding the capture pipes cannot turn a
-  normal exit into a timeout;
+- on Linux every exit kills the rest of the process group, so same-group
+  descendants do not outlive the call, and the group is signalled only while
+  the leader's pid still names it;
+- a descendant holding the capture pipes cannot turn a normal exit into a
+  timeout: the pipes are drained after the group kill, bounded at 500 ms (25 ms
+  on cancellation), and a drain cut at that bound sets `Truncated`;
 - failures keep their output: `ExecError` carries `Stdout`, `Stderr` and
   `Truncated`, and `TimeoutError` carries the partial streams.
+
+The lifecycle guarantees hold per process group and per platform. A descendant
+that leaves the group with `setsid` survives the call; its pipe is cut at the
+drain bound rather than waited on, and the output it still held is marked
+truncated. Windows has no process groups here: only the direct child is killed
+(on cancellation, on timeout and after exit through the handle the runtime
+holds), so descendants survive. Other Unix platforms reap the leader before the
+final group kill — only Linux observes the exit without reaping it — so
+elsewhere same-group descendants are cleaned up on cancellation and timeout but
+not after a normal exit.
 
 ## Layout
 

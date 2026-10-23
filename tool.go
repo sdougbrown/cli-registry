@@ -408,23 +408,24 @@ func needsDashEscape(s string) bool { return strings.HasPrefix(s, "-") && s != "
 // base must land in the directory Plan validated, not in whatever its base
 // happens to make of the same relative string.
 func (t *tool) resolveDir(opts *callOptions) (string, error) {
-	if opts.cwd != "" {
-		if t.cwd == nil || t.cwd.mode != "allow" {
-			return "", fmt.Errorf("cwd requested but tool has no allowed cwd roots")
+	if opts.cwd == "" {
+		if t.cwd != nil && t.cwd.mode == "allow" && len(t.cwd.roots) > 0 {
+			return t.cwd.roots[0], nil
 		}
-		resolved, err := resolvePath(opts.cwd)
-		if err != nil {
-			return "", fmt.Errorf("requested cwd %q: %w", opts.cwd, err)
-		}
+		return "", nil
+	}
+	resolved, err := resolvePath(opts.cwd)
+	if err != nil {
+		return "", fmt.Errorf("requested cwd %q: %w", opts.cwd, err)
+	}
+	if t.cwd != nil && t.cwd.mode == "allow" {
 		if !containedInRoots(resolved, t.cwd.roots) {
 			return "", fmt.Errorf("requested cwd %q outside allowed roots", opts.cwd)
 		}
-		return resolved, nil
 	}
-	if t.cwd != nil && t.cwd.mode == "allow" && len(t.cwd.roots) > 0 {
-		return t.cwd.roots[0], nil
-	}
-	return "", nil
+	// Without an allow list the tool leaves the directory to the host, so a
+	// requested directory is the host's own decision and needs no containment.
+	return resolved, nil
 }
 
 // resolvePath makes dir absolute and resolves symlinks, including in the part

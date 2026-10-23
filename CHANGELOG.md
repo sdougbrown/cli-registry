@@ -37,8 +37,11 @@ library's, and makes the library's own execution stop, reap and report.
 
 - `Registry.Call` is now `Plan` plus the library's own process engine; callers
   that do not plan observe the same behavior apart from the fixes below.
-- After any exit the rest of the process group is killed, so same-group
-  descendants no longer survive a normal exit.
+- On Linux the rest of the process group is killed after any exit, so
+  same-group descendants no longer survive a normal exit, and the group is
+  signalled only while the leader's pid still names it. Windows kills only the
+  direct child; other Unix platforms kill the group on cancellation and
+  timeout, but not after a normal exit.
 - A descendant that holds the capture pipes no longer turns a normal exit into
   a timeout; the pipe drain is bounded instead. A drain cut at that bound, like
   a failed capture read, sets `Truncated`, so a short stream is never reported
@@ -47,8 +50,11 @@ library's, and makes the library's own execution stop, reap and report.
   is resolved to an absolute path with symlinks resolved when `Plan` validates
   it, and `Plan.Dir` and `Call` both use that path, so a host executor with a
   different session base runs in the directory that was validated. Containment
-  is checked on the resolved directory. An empty `Plan.Dir` still means
-  "the host decides".
+  is checked on the resolved directory. An empty `Plan.Dir` still means "the
+  host decides".
+- `WithCWD` is accepted for a tool whose manifest leaves the working directory
+  to the host (`cwd.mode: inherit`, or no `cwd` scope at all); it used to be
+  rejected as though the request were an unauthorised allow-scope one.
 - A cancelled call drains the capture with a 25 ms bound instead of the 500 ms
   a normal exit or a timeout gets, so cancellation returns promptly even when a
   descendant that left the process group still holds the pipes.

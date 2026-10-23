@@ -36,10 +36,15 @@
 // scrubbed environment, a session working directory, its own cancellation and
 // process reaping — uses Plan and Finish instead and runs the argv itself:
 //
-//	p, err := reg.Plan(tool, args, cliregistry.WithCWD(sessionDir))
+//	// WithCWD(dir) is for a tool whose manifest sets cwd.mode: allow; it is
+//	// validated against the allowed roots and resolved to an absolute path.
+//	p, err := reg.Plan(tool, args)
 //	if err != nil { ... }                       // *ValidationError: nothing built
 //	env, err := p.ResolveEnv(scrubbedLookup)    // resolve env:NAME against the host's view
-//	out := myExecutor(ctx, p.Argv, env, p.Dir, p.Timeout)
+//	dir := p.Dir
+//	if dir == "" { dir = sessionDir }           // the manifest left it to the host
+//	out, err := myExecutor(ctx, p.Argv, env, dir, p.Timeout)
+//	if err != nil { ... }                       // my own cancel, timeout or start error
 //	res, err := p.Finish(out)                   // same classification as Call
 //
 //	type Plan struct {
@@ -71,9 +76,19 @@
 // Plan touches no process and reads no environment: an `env:NAME` reference
 // stays unresolved in Plan.Env, so the host decides which environment a
 // reference is resolved against. ResolveEnv applies BenignEnv, then the plan's
-// bindings, then WithEnv overrides, using the lookup it is given. Finish
-// applies the tool's success exit codes and output decoding to a captured
-// run, so a host-side run is classified exactly as Call classifies it.
+// bindings, then WithEnv overrides, using the lookup it is given.
+//
+// Plan.Dir is absolute with symlinks resolved whenever the manifest or WithCWD
+// fixes it, so an executor with its own session base runs in the directory the
+// plan validated; an empty Dir means the manifest left the choice to the host,
+// which then picks its session directory.
+//
+// Finish applies the tool's success exit codes and output decoding to a
+// captured run, so a host-side run is classified exactly as Call classifies
+// it. It classifies a completed run and does not know why a process ended:
+// when your executor cancels, times out or fails to start the command, return
+// its own error before calling Finish. The same killed-process output is a
+// *TimeoutError through Call and an *ExecError through Finish.
 //
 // A Plan comes from Registry.Plan; the zero value is not usable.
 //
@@ -88,11 +103,20 @@
 //     context.DeadlineExceeded) reports the context cause.
 //   - The timeout kills the process group and returns a *TimeoutError with a
 //     nil Cause (IsTimeout).
-//   - Every exit kills the rest of the process group, so same-group
-//     descendants do not outlive the call.
+//   - Every exit kills the rest of the process group (see the platform notes
+//     below), so same-group descendants do not outlive the call, and the group
+//     is signalled only while the leader's pid still names it.
 //   - A descendant that holds the capture pipes does not turn a normal exit
-//     into a timeout: the pipes are drained after the group kill, bounded so a
-//     descendant that left the group cannot stall the call.
+//     into a timeout: the pipes are drained after the group kill, bounded at
+//     500 ms (25 ms on cancellation). A drain cut at that bound, like a failed
+//     capture read, sets Output.Truncated.
+//
+// These guarantees hold per process group and per platform. A descendant that
+// leaves the group with setsid survives; its pipe is cut at the drain bound
+// instead of being waited on. Windows has no process groups here — only the
+// direct child is killed — so descendants survive. Only Linux observes the
+// exit without reaping the leader, so other Unix platforms clean up same-group
+// descendants on cancellation and timeout but not after a normal exit.
 //
 // # Typed errors
 //

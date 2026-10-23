@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"slices"
@@ -416,5 +417,126 @@ func TestEmptyReferenceIsMissing(t *testing.T) {
 	}
 	if _, err := r.Call(context.Background(), mustTool(t, r, "empty-ref"), map[string]any{}); err == nil {
 		t.Fatal("Call accepted a bare env: reference")
+	}
+}
+
+// ResolveEnv order: BenignEnv, then the manifest's bindings name-sorted, then
+// WithEnv overrides; a scrubbed lookup is the only source of host values.
+func TestResolveEnvOrderOverridesAndScrub(t *testing.T) {
+	t.Setenv("REVIEW_SYNTHETIC_SECRET", "dummy-host-value")
+	r := fixtureRegistry(t, map[string]fixtureDef{"env": {env: map[string]string{
+		"PATH": "manifest-path", "A": "env:SOURCE", "EMPTY": "", "Z": "literal-z",
+	}}})
+	p, err := r.Plan(mustTool(t, r, "env"), map[string]any{}, WithEnv("A", "override-a"), WithEnv("EXTRA", "extra"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	env, err := p.ResolveEnv(func(k string) (string, bool) {
+		values := map[string]string{"PATH": "host-path", "HOME": "scrubbed-home", "SOURCE": "scrubbed-source"}
+		v, ok := values[k]
+		return v, ok
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"PATH=manifest-path", "HOME=scrubbed-home", "A=override-a", "EMPTY=", "Z=literal-z", "EXTRA=extra"}
+	if !reflect.DeepEqual(env, want) {
+		t.Fatalf("env = %q, want %q", env, want)
+	}
+	if _, err := p.ResolveEnv(func(string) (string, bool) { return "", false }); err == nil || !strings.Contains(err.Error(), "SOURCE") {
+		t.Fatalf("missing reference error = %v, want one naming SOURCE", err)
+	}
+	// The secret in the process environment is never consulted.
+	for _, kv := range env {
+		if strings.Contains(kv, "dummy-host-value") {
+			t.Fatalf("resolved env leaked the process environment: %q", kv)
+		}
+	}
+	p, err = r.Plan(mustTool(t, r, "env"), map[string]any{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.Env = nil
+	env, err = p.ResolveEnv(func(string) (string, bool) { return "", false })
+	if err != nil || env == nil || len(env) != 0 {
+		t.Fatalf("empty env must be non-nil: %#v, %v", env, err)
+	}
+}
+
+// WithCWD is for a host that decided the directory itself: a tool whose
+// manifest leaves the cwd to the host accepts it, rather than failing as if it
+// were an unauthorised allow-scope request.
+func TestWithCWDForHostDecidedTool(t *testing.T) {
+	dir := t.TempDir()
+	r := fixtureRegistry(t, map[string]fixtureDef{
+		"inherit": probeTool(nil, fixtureDef{cwd: map[string]any{"mode": "inherit"}}),
+		"plain":   probeTool(nil, fixtureDef{}),
+	})
+	for _, name := range []string{"inherit", "plain"} {
+		p, err := r.Plan(mustTool(t, r, name), map[string]any{}, WithCWD(dir))
+		if err != nil {
+			t.Fatalf("%s: Plan(WithCWD(%q)) = %v", name, dir, err)
+		}
+		res, err := r.Call(context.Background(), mustTool(t, r, name), map[string]any{}, WithCWD(dir))
+		if err != nil {
+			t.Fatalf("%s: Call = %v", name, err)
+		}
+		if got := decodeProbe(t, res).Dir; got != p.Dir {
+			t.Fatalf("%s: Call ran in %q, Plan.Dir is %q", name, got, p.Dir)
+		}
+	}
+}
+
+// A host executor that runs the plan itself gets the same classification Call
+// does for a completed run.
+func TestHostExecutorParity(t *testing.T) {
+	r := fixtureRegistry(t, map[string]fixtureDef{"host": probeTool(nil, fixtureDef{})})
+	tool := mustTool(t, r, "host")
+	p, err := r.Plan(tool, map[string]any{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	env, err := p.ResolveEnv(os.LookupEnv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(p.Argv[0], p.Argv[1:]...)
+	cmd.Env, cmd.Dir = env, p.Dir
+	stdout, err := cmd.Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	host, err := p.Finish(Output{Stdout: stdout})
+	if err != nil {
+		t.Fatal(err)
+	}
+	own, err := r.Call(context.Background(), tool, map[string]any{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(host.Decoded, own.Decoded) {
+		t.Fatalf("host and Call differ: %#v / %#v", host.Decoded, own.Decoded)
+	}
+}
+
+// Finish does not classify a lifetime error: the same killed-process output is
+// a *TimeoutError through Call and an *ExecError through Finish.
+func TestFinishHasNoLifetimeClassification(t *testing.T) {
+	r := fixtureRegistry(t, map[string]fixtureDef{"sleep": {env: map[string]string{"GO_WANT_HELPER_PROCESS": "1", "FAKE_SLEEP": "60s"}}})
+	tool := mustTool(t, r, "sleep")
+	opts := []Option{WithTimeout(20 * time.Millisecond)}
+	p, err := r.Plan(tool, map[string]any{}, opts...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, callErr := r.Call(context.Background(), tool, map[string]any{}, opts...)
+	var te *TimeoutError
+	if !errors.As(callErr, &te) {
+		t.Fatalf("Call error = %T (%v), want *TimeoutError", callErr, callErr)
+	}
+	_, finishErr := p.Finish(Output{Stdout: te.Stdout, Stderr: te.Stderr, Truncated: te.Truncated, ExitCode: -1})
+	var ee *ExecError
+	if !errors.As(finishErr, &ee) || IsTimeout(finishErr) {
+		t.Fatalf("Finish error = %T (%v), want *ExecError", finishErr, finishErr)
 	}
 }
