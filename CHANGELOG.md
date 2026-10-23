@@ -20,11 +20,17 @@ library's, and makes the library's own execution stop, reap and report.
 - `BenignEnv`: the variables `Call` copies from the host by default.
 - `Output` and `Plan.Finish`: classify a host-captured run exactly as `Call`
   does — success exit codes, output decoding, `ExecError`.
-- `CanceledError` and `IsCanceled`: a cancelled context kills the process
-  group promptly and wraps `ctx.Err()`.
+- `TimeoutError.Cause` and `TimeoutError.Unwrap`: a run stopped by the
+  caller's context is still reported as `*TimeoutError`, with `Cause` set to
+  `ctx.Err()` and `Unwrap` returning it, so `IsTimeout` keeps working next to
+  `errors.Is(err, context.Canceled)` and
+  `errors.Is(err, context.DeadlineExceeded)`.
+- `IsCanceled(error)`: reports whether an error carries the end of the
+  caller's context (`context.Canceled` or `context.DeadlineExceeded`), which is
+  how a context-terminated run is told apart from the plan's own timeout now
+  that both are `*TimeoutError`.
 - `ExecError.Stdout` and `ExecError.Truncated`; `TimeoutError.Stdout`,
-  `TimeoutError.Stderr` and `TimeoutError.Truncated`; the same fields on
-  `CanceledError`.
+  `TimeoutError.Stderr` and `TimeoutError.Truncated`.
 - `TimeoutError.Timeout`, the correctly spelled timeout duration.
 
 ### Changed
@@ -35,7 +41,11 @@ library's, and makes the library's own execution stop, reap and report.
   descendants no longer survive a normal exit.
 - A descendant that holds the capture pipes no longer turns a normal exit into
   a timeout; the pipe drain is bounded instead.
-- An already-cancelled context returns without spawning.
+- A context that has ended — cancelled, or already past its deadline when the
+  call starts — kills the process group and returns `*TimeoutError`, the type
+  v0.1.0 returned, with `Cause` set to `ctx.Err()`; `IsTimeout` stays true for
+  it and `IsCanceled` reports the context cause. An already-ended context
+  returns without spawning a process.
 
 ### Fixed
 

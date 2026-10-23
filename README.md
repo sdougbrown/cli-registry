@@ -107,14 +107,17 @@ returns `*cliregistry.ExecError` for a run outside them.
 `Call` runs that same plan with the library's own engine:
 
 - a cancelled context kills the process group within milliseconds and returns
-  `*cliregistry.CanceledError` (wrapping `ctx.Err()`; test with `IsCanceled`);
-- a timeout kills the group and returns `*cliregistry.TimeoutError`
-  (`IsTimeout`);
+  `*cliregistry.TimeoutError` with `Cause` set to `ctx.Err()` (as v0.1.0
+  classified it); `IsTimeout` stays true, and `IsCanceled` — or `errors.Is`
+  against `context.Canceled` / `context.DeadlineExceeded` — reports the
+  context cause;
+- the plan's own timeout kills the group and returns
+  `*cliregistry.TimeoutError` with a nil `Cause` (`IsTimeout`);
 - every exit kills the rest of the process group, so descendants do not
   outlive the call, and a descendant holding the capture pipes cannot turn a
   normal exit into a timeout;
 - failures keep their output: `ExecError` carries `Stdout`, `Stderr` and
-  `Truncated`, and `TimeoutError`/`CanceledError` carry the partial streams.
+  `Truncated`, and `TimeoutError` carries the partial streams.
 
 ## Layout
 

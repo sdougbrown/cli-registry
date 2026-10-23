@@ -72,9 +72,17 @@ func (e *ExecError) Error() string {
 	return fmt.Sprintf("tool %q exited %d: %s", e.Tool, e.ExitCode, string(e.Stderr))
 }
 
-// TimeoutError indicates the process exceeded its timeout and was terminated
-// (whole process group). It carries the partial output captured before the
-// kill.
+// TimeoutError indicates the process was stopped before it finished and
+// carries the partial output captured before the stop. It is returned in two
+// cases:
+//
+//   - the plan's own timeout elapsed (Cause is nil);
+//   - the caller's context ended the run (Cause is ctx.Err(), either
+//     context.Canceled or context.DeadlineExceeded).
+//
+// A context-terminated run keeps this type because v0.1.0 reported it that
+// way: an existing timeout branch keeps catching it, and IsCanceled (or
+// errors.Is with the context error, through Unwrap) tells the two cases apart.
 type TimeoutError struct {
 	Tool string
 	Args []string
@@ -82,13 +90,19 @@ type TimeoutError struct {
 	Timeout time.Duration
 	// Timout is a deprecated alias for Timeout, kept so callers that read or
 	// set the misspelled field keep working. Both are set.
-	Timout    time.Duration
+	Timout time.Duration
+	// Cause is the context error that stopped the run, and nil when the
+	// timeout did. Unwrap returns it.
+	Cause     error
 	Stdout    []byte
 	Stderr    []byte
 	Truncated bool
 }
 
 func (e *TimeoutError) Error() string {
+	if e.Cause != nil {
+		return fmt.Sprintf("tool %q stopped: %v", e.Tool, e.Cause)
+	}
 	d := e.Timeout
 	if d == 0 {
 		d = e.Timout
@@ -96,23 +110,10 @@ func (e *TimeoutError) Error() string {
 	return fmt.Sprintf("tool %q timed out after %s", e.Tool, d)
 }
 
-// CanceledError indicates the caller's context was cancelled and the process
-// group was killed. It wraps the context's error, so errors.Is(err,
-// context.Canceled) (or DeadlineExceeded) still reports true, and carries the
-// partial output captured before the kill.
-type CanceledError struct {
-	Tool      string
-	Args      []string
-	Err       error
-	Stdout    []byte
-	Stderr    []byte
-	Truncated bool
-}
-
-func (e *CanceledError) Error() string {
-	return fmt.Sprintf("tool %q cancelled: %v", e.Tool, e.Err)
-}
-func (e *CanceledError) Unwrap() error { return e.Err }
+// Unwrap returns the context error that stopped the run, so
+// errors.Is(err, context.Canceled) and errors.Is(err, context.DeadlineExceeded)
+// report the caller's own cause.
+func (e *TimeoutError) Unwrap() error { return e.Cause }
 
 // Registry is a compiled, immutable, thread-safe set of tools.
 type Registry struct {
@@ -212,8 +213,15 @@ func WithTimeout(d time.Duration) Option { return func(o *callOptions) { o.timeo
 // WithEnv adds or overrides declared environment variables for a single call.
 func WithEnv(k, v string) Option { return func(o *callOptions) { o.env[k] = v } }
 
-// IsTimeout reports whether err is a *TimeoutError (errors.As-aware helper).
+// IsTimeout reports whether err is a *TimeoutError (errors.As-aware helper). A
+// context-terminated run is also a *TimeoutError, for v0.1.0 compatibility;
+// use IsCanceled to tell it apart from the plan's own timeout.
 func IsTimeout(err error) bool { var te *TimeoutError; return errors.As(err, &te) }
 
-// IsCanceled reports whether err is a *CanceledError (errors.As-aware helper).
-func IsCanceled(err error) bool { var ce *CanceledError; return errors.As(err, &ce) }
+// IsCanceled reports whether err carries the end of the caller's context —
+// context.Canceled or context.DeadlineExceeded — rather than the plan's own
+// timeout. It follows the wrapped cause, so it works on any error that wraps a
+// context error, not just on Call's own returns.
+func IsCanceled(err error) bool {
+	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
+}

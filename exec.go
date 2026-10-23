@@ -146,7 +146,15 @@ func (e *executor) termination() (terminationCause, error) {
 
 func (p *Plan) run(ctx context.Context) (*Result, error) {
 	if err := ctx.Err(); err != nil {
-		return nil, &CanceledError{Tool: p.Tool, Args: p.Argv, Err: err}
+		// No process is spawned, but the error keeps v0.1.0's family: a caller
+		// with a timeout branch still catches it, and Cause names the context.
+		return nil, &TimeoutError{
+			Tool:    p.Tool,
+			Args:    p.Argv,
+			Timeout: p.Timeout,
+			Timout:  p.Timeout,
+			Cause:   err,
+		}
 	}
 	env, err := p.ResolveEnv(os.LookupEnv)
 	if err != nil {
@@ -269,10 +277,12 @@ func (p *Plan) run(ctx context.Context) (*Result, error) {
 			Truncated: out.Truncated,
 		}
 	case causeCancel:
-		return nil, &CanceledError{
+		return nil, &TimeoutError{
 			Tool:      p.Tool,
 			Args:      p.Argv,
-			Err:       ctxErr,
+			Timeout:   p.Timeout,
+			Timout:    p.Timeout,
+			Cause:     ctxErr,
 			Stdout:    out.Stdout,
 			Stderr:    out.Stderr,
 			Truncated: out.Truncated,

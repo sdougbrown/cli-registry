@@ -81,10 +81,12 @@
 //   - The child runs in its own process group with stdin closed and both
 //     streams captured up to 1 MiB each.
 //   - A cancelled or already-cancelled context kills the process group
-//     immediately and returns a *CanceledError wrapping ctx.Err(); a caller
-//     can test for it with IsCanceled.
-//   - The timeout kills the process group and returns a *TimeoutError
-//     (IsTimeout).
+//     immediately and returns a *TimeoutError with Cause set to ctx.Err(), the
+//     same error family v0.1.0 returned; IsTimeout is true for it, and
+//     IsCanceled (or errors.Is against context.Canceled /
+//     context.DeadlineExceeded) reports the context cause.
+//   - The timeout kills the process group and returns a *TimeoutError with a
+//     nil Cause (IsTimeout).
 //   - Every exit kills the rest of the process group, so same-group
 //     descendants do not outlive the call.
 //   - A descendant that holds the capture pipes does not turn a normal exit
@@ -98,11 +100,12 @@
 //	ValidationError  — args fail the input schema (carries []StructuralIssue)
 //	ExecError        — process ran but exited outside success_exit_codes;
 //	                   carries Stdout, Stderr and Truncated
-//	TimeoutError     — process exceeded timeout (distinct from ExecError);
-//	                   carries the partial Stdout, Stderr and Truncated, and
-//	                   the duration as Timeout (Timout is a deprecated alias)
-//	CanceledError    — the caller's context was cancelled; wraps ctx.Err() and
-//	                   carries the partial Stdout, Stderr and Truncated
+//	TimeoutError     — the process was stopped before it finished (distinct
+//	                   from ExecError): by the plan's timeout (nil Cause) or by
+//	                   the caller's context (Cause = ctx.Err(), returned by
+//	                   Unwrap). Carries the partial Stdout, Stderr and
+//	                   Truncated, and the duration as Timeout (Timout is a
+//	                   deprecated alias).
 //
 //	type StructuralIssue struct {
 //	    Source string // "json-schema"

@@ -98,15 +98,18 @@ func TestCancelledContextStopsProcess(t *testing.T) {
 		if !errors.Is(got.err, context.Canceled) {
 			t.Fatalf("err = %v, want one wrapping context.Canceled", got.err)
 		}
-		var ce *CanceledError
-		if !errors.As(got.err, &ce) {
-			t.Fatalf("err = %T, want *CanceledError", got.err)
+		var te *TimeoutError
+		if !errors.As(got.err, &te) {
+			t.Fatalf("err = %T, want *TimeoutError (v0.1.0's family)", got.err)
 		}
 		if !IsCanceled(got.err) {
 			t.Fatal("IsCanceled = false for a cancelled call")
 		}
-		if string(ce.Stdout) != "before-cancel\n" {
-			t.Fatalf("CanceledError.Stdout = %q, want the partial output", ce.Stdout)
+		if te.Cause == nil {
+			t.Fatal("TimeoutError.Cause = nil for a cancelled call")
+		}
+		if string(te.Stdout) != "before-cancel\n" {
+			t.Fatalf("TimeoutError.Stdout = %q, want the partial output", te.Stdout)
 		}
 		if elapsed := time.Since(start); elapsed > time.Second {
 			t.Fatalf("cancel took %s to stop the process, want < 1s", elapsed)
