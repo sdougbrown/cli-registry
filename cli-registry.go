@@ -1,9 +1,8 @@
-// Package cliregistry turns pre-registered CLI commands into typed tool calls.
-//
-// The public contract (types, invariants, thread-safety) is documented in
-// doc.go and specs/*.md. This file implements the registry surface: loading,
-// enumeration, calling, options, and typed errors.
 package cliregistry
+
+// This file implements the registry surface: loading, enumeration, calling,
+// options, and typed errors. The public contract (types, invariants,
+// thread-safety) is documented in doc.go and specs/*.md.
 
 import (
 	"context"
@@ -46,7 +45,9 @@ func (e *DefinitionError) Error() string {
 }
 func (e *DefinitionError) Unwrap() error { return e.Err }
 
-// ValidationError indicates the call args failed the tool's input schema. No
+// ValidationError indicates the call args were refused before anything was
+// built: they failed the tool's input schema, or a value a binding would emit
+// as a separate argv element would be read by the command as an option. No
 // process was spawned.
 type ValidationError struct {
 	Tool   string
@@ -58,29 +59,63 @@ func (e *ValidationError) Error() string {
 }
 
 // ExecError indicates the process ran to completion but exited outside the
-// tool's success exit codes.
+// tool's success exit codes. It carries what the process wrote before it
+// exited, so a host can show the output that came with the failure.
 type ExecError struct {
-	Tool     string
-	Args     []string
-	ExitCode int
-	Stderr   []byte
+	Tool      string
+	Args      []string
+	ExitCode  int
+	Stdout    []byte
+	Stderr    []byte
+	Truncated bool
 }
 
 func (e *ExecError) Error() string {
 	return fmt.Sprintf("tool %q exited %d: %s", e.Tool, e.ExitCode, string(e.Stderr))
 }
 
-// TimeoutError indicates the process exceeded its timeout and was terminated
-// (whole process group).
+// TimeoutError indicates the process was stopped before it finished and
+// carries the partial output captured before the stop. It is returned in two
+// cases:
+//
+//   - the plan's own timeout elapsed (Cause is nil);
+//   - the caller's context ended the run (Cause is ctx.Err(), either
+//     context.Canceled or context.DeadlineExceeded).
+//
+// A context-terminated run keeps this type because v0.1.0 reported it that
+// way: an existing timeout branch keeps catching it, and IsCanceled (or
+// errors.Is with the context error, through Unwrap) tells the two cases apart.
 type TimeoutError struct {
-	Tool   string
-	Args   []string
+	Tool string
+	Args []string
+	// Timeout is how long the process was allowed to run.
+	Timeout time.Duration
+	// Timout is a deprecated alias for Timeout, kept so callers that read or
+	// set the misspelled field keep working. Both are set.
 	Timout time.Duration
+	// Cause is the context error that stopped the run, and nil when the
+	// timeout did. Unwrap returns it.
+	Cause     error
+	Stdout    []byte
+	Stderr    []byte
+	Truncated bool
 }
 
 func (e *TimeoutError) Error() string {
-	return fmt.Sprintf("tool %q timed out after %s", e.Tool, e.Timout)
+	if e.Cause != nil {
+		return fmt.Sprintf("tool %q stopped: %v", e.Tool, e.Cause)
+	}
+	d := e.Timeout
+	if d == 0 {
+		d = e.Timout
+	}
+	return fmt.Sprintf("tool %q timed out after %s", e.Tool, d)
 }
+
+// Unwrap returns the context error that stopped the run, so
+// errors.Is(err, context.Canceled) and errors.Is(err, context.DeadlineExceeded)
+// report the caller's own cause.
+func (e *TimeoutError) Unwrap() error { return e.Cause }
 
 // Registry is a compiled, immutable, thread-safe set of tools.
 type Registry struct {
@@ -135,27 +170,15 @@ func (r *Registry) Lookup(name string) (Tool, bool) {
 // Call validates args against tool's schema, builds argv, spawns the command,
 // and returns the decoded result. Args that fail validation return a
 // *ValidationError before any process is spawned.
+//
+// Call is Plan plus the library's own exec: a host that runs commands itself
+// uses Plan and Finish instead, and sees the same classification.
 func (r *Registry) Call(ctx context.Context, tool Tool, args map[string]any, opt ...Option) (*Result, error) {
-	t, ok := r.tools[tool.Name]
-	if !ok {
-		return nil, &LoadError{Err: fmt.Errorf("unknown tool %q", tool.Name)}
-	}
-	opts := defaultCallOptions()
-	for _, o := range opt {
-		o(&opts)
-	}
-
-	// validate before spawn
-	if issues := t.schema.Validate(args); len(issues) > 0 {
-		return nil, &ValidationError{Tool: t.name, Issues: issues}
-	}
-
-	argv, err := t.buildArgv(args, &opts)
+	p, err := r.Plan(tool, args, opt...)
 	if err != nil {
-		return nil, &DefinitionError{Tool: t.name, Err: err}
+		return nil, err
 	}
-
-	return t.exec(ctx, argv, &opts)
+	return p.run(ctx)
 }
 
 // Result is the decoded outcome of a tool call.
@@ -183,7 +206,11 @@ func defaultCallOptions() callOptions {
 
 // WithCWD requests a working directory for the call. In "allow" cwd mode the
 // requested path must fall within the tool's allowed roots, else the call
-// fails.
+// fails. A tool without an allow scope leaves the working directory to the
+// host, so a request for one is accepted as given. Either way Plan resolves it
+// to an absolute path with symlinks resolved and reports it as Plan.Dir; a
+// directory that cannot be fully resolved (missing, dangling symlink, loop or
+// unreadable) is an error at plan time.
 func WithCWD(dir string) Option { return func(o *callOptions) { o.cwd = dir } }
 
 // WithTimeout overrides the tool's default timeout for a single call.
@@ -192,5 +219,15 @@ func WithTimeout(d time.Duration) Option { return func(o *callOptions) { o.timeo
 // WithEnv adds or overrides declared environment variables for a single call.
 func WithEnv(k, v string) Option { return func(o *callOptions) { o.env[k] = v } }
 
-// IsTimeout reports whether err is a *TimeoutError (errors.Is-aware helper).
+// IsTimeout reports whether err is a *TimeoutError (errors.As-aware helper). A
+// context-terminated run is also a *TimeoutError, for v0.1.0 compatibility;
+// use IsCanceled to tell it apart from the plan's own timeout.
 func IsTimeout(err error) bool { var te *TimeoutError; return errors.As(err, &te) }
+
+// IsCanceled reports whether err carries the end of the caller's context —
+// context.Canceled or context.DeadlineExceeded — rather than the plan's own
+// timeout. It follows the wrapped cause, so it works on any error that wraps a
+// context error, not just on Call's own returns.
+func IsCanceled(err error) bool {
+	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
+}

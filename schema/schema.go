@@ -20,7 +20,9 @@ import (
 
 // StructuralIssue is a normalized structural validation finding. Normative
 // cross-runtime fields are Code and Path (RFC 6901 pointer into the value);
-// Source is always "json-schema". Messages are not normative.
+// Source names the producer — "json-schema" for an issue this package
+// produces, "argv-binding" for one the argv contract contributes. Messages are
+// not normative.
 type StructuralIssue struct {
 	Source  string
 	Code    string

@@ -78,6 +78,86 @@ for the normative contract.
 }
 ```
 
+## Running it yourself
+
+`Call` validates, builds the argv and spawns the command in one step. A host
+that already owns an executor — a sandbox, a scrubbed environment, the
+session's working directory, its own cancellation and process reaping — splits
+that into `Plan`, its own run, and `Finish`:
+
+```go
+// cliregistry.WithCWD(dir) is resolved to an absolute path. Under cwd.mode:
+// allow it is checked against the allowed roots; a tool with no allow scope
+// leaves the directory to the host, so the request is taken as given.
+p, err := reg.Plan(tool, args)
+if err != nil {
+    return err // *cliregistry.ValidationError: nothing was built
+}
+env, err := p.ResolveEnv(scrubbedLookup) // resolve `env:NAME` against the host's own view
+if err != nil {
+    return err
+}
+dir := p.Dir
+if dir == "" {
+    dir = sessionDir // the manifest left the directory to the host
+}
+out, err := executor.Run(ctx, p.Argv, env, dir, p.Timeout) // your argv, env, cwd, lifetime
+if err != nil {
+    return err // the executor's own cancel, timeout or start error
+}
+res, err := p.Finish(out) // classifies exactly like Call
+```
+
+`Plan` touches no process and reads no environment, so an `env:NAME` reference
+resolves against whatever environment the host passes to `ResolveEnv`, not the
+process environment. `BenignEnv` lists the variables `Call` copies by default.
+A fixed `Plan.Dir` is absolute with symlinks resolved, so an executor with its
+own session base runs in the directory `Plan` validated; an empty one means the
+manifest left the choice to the host. A directory that cannot be fully
+resolved — missing, a dangling symlink, a loop, or unreadable — is an error
+from `Plan`, not an unchecked path handed to an executor.
+
+`Finish` classifies a completed run: it applies the tool's success exit codes
+and output decoding, and returns `*cliregistry.ExecError` for a run outside
+them. It does not know why a process ended, so branch on the executor's own
+cancel, timeout and start errors before calling it — the same killed-process
+output is a `*cliregistry.TimeoutError` through `Call` and an `*ExecError`
+through `Finish`.
+
+`Call` runs that same plan with the library's own engine:
+
+- the child runs in its own process group, with stdin closed and both streams
+  captured up to 1 MiB each;
+- a cancelled context stops the run within milliseconds (the whole process
+  group on the Linux path, only the leader on the fallback below) and returns
+  `*cliregistry.TimeoutError` with `Cause` set to `ctx.Err()` (as v0.1.0
+  classified it); `IsTimeout` stays true, and `IsCanceled` — or `errors.Is`
+  against `context.Canceled` / `context.DeadlineExceeded` — reports the
+  context cause;
+- the plan's own timeout stops it the same way and returns
+  `*cliregistry.TimeoutError` with a nil `Cause` (`IsTimeout`);
+- on Linux every exit kills the rest of the process group, so same-group
+  descendants do not outlive the call, and the group is signalled only while
+  the leader's pid still names it;
+- a descendant holding the capture pipes cannot turn a normal exit into a
+  timeout: the pipes are drained after the group kill, bounded at 500 ms (25 ms
+  on cancellation), and a drain cut at that bound sets `Truncated`;
+- failures keep their output: `ExecError` carries `Stdout`, `Stderr` and
+  `Truncated`, and `TimeoutError` carries the partial streams.
+
+The lifecycle guarantees hold per process group and per platform. A descendant
+that leaves the group with `setsid` survives the call; its pipe is cut at the
+drain bound rather than waited on, and the output it still held is marked
+truncated. Windows has no process groups here: only the direct child is killed
+(on cancellation, on timeout and after exit through the handle the runtime
+holds), so descendants survive. Only Linux observes the exit without reaping
+the leader, which is what keeps the group id valid for a kill. A path without
+that observation — every other Unix platform, and Linux when the non-reaping
+observation fails — never sends a numeric group signal: timeout and
+cancellation stop only the leader through the runtime's guarded process
+operation, so same-group descendants may survive that path too, including on
+cancellation and timeout.
+
 ## Layout
 
 | Path | Purpose |
@@ -101,10 +181,14 @@ checks the vendored fixtures' integrity; `make verify` runs the whole gate.
 - **Explicit registry** — only pre-registered surfaces are exposed; never
   auto-mirror a CLI.
 - **No shell** — argv passes to `exec.Command` directly (no injection).
-- **Env allow-list** — only declared variables (plus a benign default set);
-  `env:NAME` passthrough must be declared.
+- **Env allow-list** — only declared variables (plus `BenignEnv`); an
+  `env:NAME` passthrough must be declared, and a host that plans the call
+  resolves the reference against its own (scrubbed) environment.
 - **cwd containment** — optional `allow` roots, canonicalized.
-- **Timeout + process-group kill** — descendants are reaped.
+- **Timeout + group kill** — on the Linux path the whole process group is
+  killed while the leader's pid still names it, on every exit as well as on
+  cancellation and timeout. The fallback path stops only the leader, so
+  same-group descendants may survive there.
 - **HTTP daemon** — loopback bind by default, bearer auth, Host/Origin checks,
   1 MiB request limit.
 

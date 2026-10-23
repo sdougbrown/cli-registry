@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -28,6 +29,24 @@ func TestHelperProcess(t *testing.T) {
 	if m := os.Getenv("FAKE_MARKER"); m != "" {
 		os.WriteFile(m, []byte("marker"), 0o644)
 	}
+	if s := os.Getenv("FAKE_STDOUT"); s != "" {
+		fmt.Print(s)
+	}
+	if s := os.Getenv("FAKE_STDERR"); s != "" {
+		fmt.Fprint(os.Stderr, s)
+	}
+	if os.Getenv("FAKE_OUTPUT") == "big" {
+		// more than the 1 MiB capture limit
+		fmt.Print(strings.Repeat("x", maxCapture+512))
+	}
+	// Recorded after the output so a test that waits for the pid file also
+	// knows what the fixture has already written.
+	if p := os.Getenv("FAKE_RECORD_PID"); p != "" {
+		os.WriteFile(p, []byte(strconv.Itoa(os.Getpid())), 0o644)
+	}
+	if mode := os.Getenv("FAKE_DESCENDANT"); mode != "" {
+		spawnFixtureDescendant(mode)
+	}
 	if s := os.Getenv("FAKE_SLEEP"); s != "" {
 		d, _ := time.ParseDuration(s)
 		time.Sleep(d)
@@ -45,12 +64,46 @@ func TestHelperProcess(t *testing.T) {
 	case "args":
 		b, _ := json.Marshal(rest)
 		fmt.Println(string(b))
+	case "probe":
+		probe := map[string]any{"args": os.Args[1:], "env": environMap()}
+		probe["dir"], _ = os.Getwd()
+		json.NewEncoder(os.Stdout).Encode(probe)
 	case "env":
 		fmt.Println(os.Getenv("FAKE_ECHO_OUT"))
+	case "big":
+		// printed above, before FAKE_EXIT
+	case "quiet":
+		// print nothing; FAKE_STDOUT carries the output
 	default:
 		fmt.Println("hello")
 	}
 	os.Exit(0)
+}
+
+// spawnFixtureDescendant starts a long-lived child in the fixture's process
+// group. "bg" gives it the null device (it holds no capture pipe); "pipe"
+// hands it the inherited stdout/stderr so it keeps the capture pipes open.
+func spawnFixtureDescendant(mode string) {
+	c := exec.Command("sleep", "60")
+	if mode == "pipe" {
+		c.Stdout = os.Stdout
+		c.Stderr = os.Stderr
+	}
+	if err := c.Start(); err != nil {
+		return
+	}
+	if p := os.Getenv("FAKE_DESCENDANT_PID"); p != "" {
+		os.WriteFile(p, []byte(strconv.Itoa(c.Process.Pid)), 0o644)
+	}
+}
+
+func environMap() map[string]string {
+	m := map[string]string{}
+	for _, kv := range os.Environ() {
+		k, v, _ := strings.Cut(kv, "=")
+		m[k] = v
+	}
+	return m
 }
 
 func indexAfter(args []string, tok string) int {
@@ -239,15 +292,42 @@ func TestTimeoutError(t *testing.T) {
 	}
 }
 
+// A non-positive manifest timeout would arm no watchdog, so the tool could
+// never time out; it is refused when the manifest is compiled. v0.1.0 armed a
+// zero timer instead, which fired at once.
+func TestNonPositiveTimeoutIsRejectedAtLoad(t *testing.T) {
+	for _, timeout := range []string{"0s", "-1s"} {
+		t.Run(timeout, func(t *testing.T) {
+			m := fmt.Sprintf(`{"version":1,"tools":{"t":{
+				"description":"non-positive timeout","command":[%s,"-test.run=TestHelperProcess","--"],
+				"timeout":%s,
+				"inputSchema":{"type":"object","properties":{},"additionalProperties":false}
+			}}}`, js(helperBin(t)), js(timeout))
+			p := filepath.Join(t.TempDir(), "tools.json")
+			if err := os.WriteFile(p, []byte(m), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			_, err := Load(p)
+			var de *DefinitionError
+			if !errors.As(err, &de) {
+				t.Fatalf("Load with timeout %q = %T (%v), want *DefinitionError", timeout, err, err)
+			}
+			if msg := err.Error(); !strings.Contains(msg, timeout) || !strings.Contains(msg, "must be positive") {
+				t.Fatalf("error %q does not name the timeout %q and the rule it broke", msg, timeout)
+			}
+		})
+	}
+}
+
 func TestInvalidArgsDoNotSpawn(t *testing.T) {
 	r := writeToolRegistry(t)
 	dir := t.TempDir()
 	marker := filepath.Join(dir, "ran.marker")
 	tool := mustTool(t, r, "marker")
-	// name tool env has no FAKE_MARKER; set it on the manifest? Instead use env option won't add FAKE_MARKER (not declared).
-	// Instead: a required field missing must fail validation, proving no spawn.
-	res := &struct{ ok bool }{}
-	// We can't set FAKE_MARKER via this tool (env allow-list). Use WithEnv? that only sets declared? WithEnv adds to opts.env regardless of declared. But helper only writes marker if FAKE_MARKER set.
+	// WithEnv sets the variable regardless of the manifest's env allow-list, and
+	// the helper writes the marker whenever FAKE_MARKER is set. So the marker
+	// would exist if the process ran, and its absence proves validation refused
+	// the call before any spawn.
 	_, err := r.Call(context.Background(), tool, map[string]any{}, WithEnv("FAKE_MARKER", marker))
 	var ve *ValidationError
 	if !errors.As(err, &ve) {
@@ -259,7 +339,6 @@ func TestInvalidArgsDoNotSpawn(t *testing.T) {
 	if !veIssues(ve, "required", "/name") {
 		t.Fatalf("expected required @ /name issue, got %v", ve.Issues)
 	}
-	_ = res
 }
 
 func veIssues(ve *ValidationError, code, path string) bool {
@@ -288,6 +367,9 @@ func TestCWDRestricted(t *testing.T) {
 		t.Fatal(err)
 	}
 	outside := filepath.Join(dir, "..", "outside")
+	if err := os.Mkdir(outside, 0o700); err != nil {
+		t.Fatal(err)
+	}
 	_, err = r.Call(context.Background(), mustTool(t, r, "t"), map[string]any{}, WithCWD(outside))
 	if err == nil || !strings.Contains(err.Error(), "outside allowed roots") {
 		t.Fatalf("expected cwd containment error, got %v", err)

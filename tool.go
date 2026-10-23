@@ -1,17 +1,14 @@
 package cliregistry
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
-	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/sdougbrown/cli-registry/manifest"
@@ -82,13 +79,6 @@ type toolDef struct {
 	} `json:"output"`
 }
 
-// benignDefaultEnv is the minimal set of standard variables passed to a child
-// in addition to declared env, so real CLIs (and their subprocesses, via PATH,
-// HOME, LANG) can run without blanket-inheriting arbitrary host env.
-var benignDefaultEnv = []string{"PATH", "HOME", "LANG", "LC_ALL", "TMPDIR"}
-
-const maxCapture = 1 << 20 // 1 MiB per stream
-
 func (r *Registry) compileTool(doc *manifest.Document, name string) error {
 	raw := doc.Tools[name]
 	var def toolDef
@@ -119,6 +109,9 @@ func (r *Registry) compileTool(doc *manifest.Document, name string) error {
 		d, err := time.ParseDuration(def.Timeout)
 		if err != nil {
 			return fmt.Errorf("invalid timeout %q: %w", def.Timeout, err)
+		}
+		if d <= 0 {
+			return fmt.Errorf("invalid timeout %q: must be positive", def.Timeout)
 		}
 		t.timeout = d
 	} else {
@@ -327,7 +320,6 @@ func (t *tool) appendBinding(argv []string, b binding, v any, first bool) ([]str
 			return argv, first, nil
 		}
 		if arr, ok := v.([]any); ok {
-			argv = append(argv, b.flag)
 			for _, el := range arr {
 				argv = append(argv, b.flag, encodeScalar(el))
 			}
@@ -411,149 +403,116 @@ func encodeScalar(v any) string {
 
 func needsDashEscape(s string) bool { return strings.HasPrefix(s, "-") && s != "-" }
 
-// exec spawns argv under the tool's resolved command semantics.
-func (t *tool) exec(ctx context.Context, argv []string, opts *callOptions) (*Result, error) {
-	cmd := exec.Command(argv[0], argv[1:]...)
+// codeSeparateValueDash is the issue code for a value that a binding emitting
+// its value as a separate argv element would place where the command reads an
+// option. The issue's Source is "argv-binding" and its Path is an RFC 6901
+// pointer to the offending value; specs/argv.md names the code.
+const codeSeparateValueDash = "separateValueDash"
 
-	// env allow-list
-	env := map[string]string{}
-	for _, k := range benignDefaultEnv {
-		if v, ok := os.LookupEnv(k); ok {
-			env[k] = v
+// separateValueIssues reports every value that a separate-value binding would
+// emit as an argv element of its own, when that element begins with a dash.
+//
+// A "space" binding emits `--flag <value>`, so a value of `--recursive`, `--`
+// or `-1` sits where the command parses an option and is indistinguishable from
+// one the manifest declared. Only the binding knows that element came from an
+// argument, so the value is refused here for the property that bound it, before
+// any argv is built, and for every element of an array. The check runs on the
+// element the emitter would encode, whatever its Go type, so a named string or
+// a negative number is covered as well as a plain string.
+//
+// "equals" (`--flag=<value>`) and the attached "short" form (`-l<value>`) keep
+// the value inside one element, where no parser can read it as an option, and a
+// positional value keeps buildArgv's "--" escape. Neither is inspected here.
+func (t *tool) separateValueIssues(args map[string]any) []StructuralIssue {
+	var issues []StructuralIssue
+	for _, b := range t.bindings {
+		// The only style that emits a separate value. A style that starts to
+		// emit one must be added here with it, or this guard has a hole.
+		if b.style != "space" {
+			continue
 		}
-	}
-	for k, v := range t.env {
-		if strings.HasPrefix(v, "env:") {
-			name := strings.TrimPrefix(v, "env:")
-			host, ok := os.LookupEnv(name)
-			if !ok {
-				return nil, fmt.Errorf("referenced env %q not present", name)
+		v, present := args[b.property]
+		if !present {
+			continue
+		}
+		if arr, ok := v.([]any); ok {
+			for i, el := range arr {
+				s := encodeScalar(el)
+				if strings.HasPrefix(s, "-") {
+					issues = append(issues, separateValueDashIssue(b, propertyPointer(b.property)+"/"+strconv.Itoa(i), s))
+				}
 			}
-			env[k] = host
-		} else {
-			env[k] = v
+			continue
+		}
+		s := encodeScalar(v)
+		if strings.HasPrefix(s, "-") {
+			issues = append(issues, separateValueDashIssue(b, propertyPointer(b.property), s))
 		}
 	}
-	for k, v := range opts.env {
-		env[k] = v
-	}
-	for k, v := range env {
-		cmd.Env = append(cmd.Env, k+"="+v)
-	}
-
-	// cwd
-	if opts.cwd != "" {
-		if t.cwd == nil || t.cwd.mode != "allow" {
-			return nil, fmt.Errorf("cwd requested but tool has no allowed cwd roots")
-		}
-		if !containedInRoots(opts.cwd, t.cwd.roots) {
-			return nil, fmt.Errorf("requested cwd %q outside allowed roots", opts.cwd)
-		}
-		cmd.Dir = opts.cwd
-	} else if t.cwd != nil && t.cwd.mode == "allow" && len(t.cwd.roots) > 0 {
-		cmd.Dir = t.cwd.roots[0]
-	}
-
-	// stdin closed; bounded capture via io.Writer
-	cmd.Stdin = nil
-	outW := newBoundedWriter(maxCapture)
-	errW := newBoundedWriter(maxCapture)
-	cmd.Stdout = outW
-	cmd.Stderr = errW
-
-	// process group so we can kill descendants
-	setProcAttr(cmd)
-	start := time.Now()
-	if err := cmd.Start(); err != nil {
-		return nil, fmt.Errorf("start: %w", err)
-	}
-
-	timeout := t.timeout
-	if opts.timeout > 0 {
-		timeout = opts.timeout
-	}
-	var timedOut atomic.Bool
-	timer := time.AfterFunc(timeout, func() {
-		// mark timed-out first, then kill the whole process group (descendants)
-		timedOut.Store(true)
-		killProcessGroup(cmd)
-	})
-	waite := cmd.Wait()
-	timer.Stop()
-
-	// honor an already-cancelled caller context as a timeout as well
-	if ctx.Err() != nil {
-		timedOut.Store(true)
-		killProcessGroup(cmd)
-	}
-
-	if timedOut.Load() {
-		return nil, &TimeoutError{Tool: t.name, Args: argv, Timout: timeout}
-	}
-
-	exitCode := 0
-	if waite != nil {
-		var ee *exec.ExitError
-		if errors.As(waite, &ee) {
-			exitCode = ee.ExitCode()
-		} else {
-			return nil, fmt.Errorf("wait: %w", waite)
-		}
-	}
-
-	res := &Result{
-		Stdout:    outW.Bytes(),
-		Stderr:    errW.Bytes(),
-		Truncated: outW.Truncated() || errW.Truncated(),
-		ExitCode:  exitCode,
-		Duration:  time.Since(start),
-	}
-	if !t.output.successExitCodes[exitCode] {
-		return nil, &ExecError{Tool: t.name, Args: argv, ExitCode: exitCode, Stderr: res.Stderr}
-	}
-	if err := t.decodeOutput(res); err != nil {
-		return nil, fmt.Errorf("decode output: %w", err)
-	}
-	return res, nil
+	return issues
 }
 
-type boundedWriter struct {
-	mu        sync.Mutex
-	buf       []byte
-	limit     int
-	truncated bool
-}
-
-func newBoundedWriter(limit int) *boundedWriter { return &boundedWriter{limit: limit} }
-
-func (b *boundedWriter) Write(p []byte) (int, error) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	n := len(p)
-	if len(b.buf) < b.limit {
-		room := b.limit - len(b.buf)
-		if n > room {
-			b.buf = append(b.buf, p[:room]...)
-			b.truncated = true
-		} else {
-			b.buf = append(b.buf, p...)
-		}
-	} else {
-		b.truncated = true
+func separateValueDashIssue(b binding, path, value string) StructuralIssue {
+	return StructuralIssue{
+		Source: "argv-binding",
+		Code:   codeSeparateValueDash,
+		Path:   path,
+		Message: fmt.Sprintf("property %q: value %q begins with a dash, and a %q binding emits it "+
+			"as a separate argv element, where the command reads it as an option; "+
+			"use style %q to pass a value that begins with a dash",
+			b.property, value, b.style, "equals"),
 	}
-	return n, nil // report full write; we silently drop excess
 }
 
-func (b *boundedWriter) Bytes() []byte {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return append([]byte(nil), b.buf...)
+// propertyPointer is the RFC 6901 pointer to a bound top-level property.
+func propertyPointer(property string) string {
+	r := strings.NewReplacer("~", "~0", "/", "~1")
+	return "/" + r.Replace(property)
 }
 
-func (b *boundedWriter) Truncated() bool {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return b.truncated
+// resolveDir returns the absolute, symlink-resolved working directory the
+// manifest or WithCWD fixes, or "" when the host decides (cwd.mode inherit, no
+// manifest scope).
+//
+// A fixed directory is resolved here, once, against the planning process's
+// working directory: a host executor that runs the argv from its own session
+// base must land in the directory Plan validated, not in whatever its base
+// happens to make of the same relative string. The directory must exist and
+// resolve completely; a path whose symlinks cannot be followed is an error
+// rather than a lexical guess, and containment is checked on the result.
+func (t *tool) resolveDir(opts *callOptions) (string, error) {
+	if opts.cwd == "" {
+		if t.cwd != nil && t.cwd.mode == "allow" && len(t.cwd.roots) > 0 {
+			return t.cwd.roots[0], nil
+		}
+		return "", nil
+	}
+	resolved, err := resolvePath(opts.cwd)
+	if err != nil {
+		return "", fmt.Errorf("requested cwd %q: %w", opts.cwd, err)
+	}
+	if t.cwd != nil && t.cwd.mode == "allow" {
+		if !containedInRoots(resolved, t.cwd.roots) {
+			return "", fmt.Errorf("requested cwd %q outside allowed roots", opts.cwd)
+		}
+	}
+	// Without an allow list the tool leaves the directory to the host, so a
+	// requested directory is the host's own decision and needs no containment.
+	return resolved, nil
+}
+
+// resolvePath makes dir absolute and resolves every symlink in it, so the
+// containment check and the executor both see the directory the process would
+// really start in. Nothing is inferred from a partial resolution: a directory
+// that does not exist, a dangling symlink, an unreadable component or a
+// symlink loop is an error, because a path that cannot be fully resolved
+// cannot be proven to be inside an allowed root.
+func resolvePath(dir string) (string, error) {
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return "", err
+	}
+	return filepath.EvalSymlinks(abs)
 }
 
 // evalPointer evaluates an RFC 6901 JSON Pointer against a decoded value.
@@ -616,13 +575,12 @@ func (t *tool) decodeOutput(res *Result) error {
 	return nil
 }
 
+// containedInRoots reports whether dir is one of roots or inside one of them.
+// Both sides are absolute with symlinks resolved (see resolvePath and the cwd
+// roots compiled at load), so the check compares identities, not spellings.
 func containedInRoots(dir string, roots []string) bool {
-	abs, err := filepath.Abs(dir)
-	if err != nil {
-		return false
-	}
 	for _, root := range roots {
-		if abs == root || strings.HasPrefix(abs, root+string(filepath.Separator)) {
+		if dir == root || strings.HasPrefix(dir, root+string(filepath.Separator)) {
 			return true
 		}
 	}

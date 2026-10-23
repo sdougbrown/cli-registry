@@ -33,12 +33,14 @@ Let `v` be the validated value for a bound property and `s` its schema type.
 ### `space` (flag then separate value)
 - scalar: append `--flag`, then `<value>`
 - boolean `true`: append `--flag`; `false`: emit nothing
-- array: append `--flag`, then each element on its own; `--flag` shown only once
+- array: one `--flag <element>` pair per element; an empty array emits nothing
 - object/other: **rejected at compile time**
 
 ### `short` (single-dash)
-- scalar: append `-<short>` (boolean true) or `-<short><value>` / `-<short> <value>` per equals-vs-space sub-style
-- array: append one short flag per element
+- scalar: append `-<short><value>` — the value is attached to the flag, this
+  implementation has no separate-value short form
+- boolean `true`: append `-<short>`; `false`: emit nothing
+- array: append one `<short><element>` per element
 - object/other: rejected at compile time
 
 ### `positional`
@@ -61,6 +63,31 @@ When a binding row or the command's positional tail may begin with a value that
 starts with `-`, the engine inserts `--` before that positional value to prevent
 it being parsed as a flag. The engine never injects literal shell syntax; all argv
 elements are passed to `exec.Command` directly (no shell, no shell injection).
+
+## Dash-leading values on a separate-value binding
+
+A value the engine emits as its own argv element after a flag must not begin
+with `-`. `space` is such a style (`--flag <value>`): a value of `--recursive`,
+`--`, `-1` or `-1.5` sits exactly where the command parses options, and the
+command reads it as one the manifest never declared. Nothing in the argv
+sequence can mark that element as data, so the value is refused at call
+validation, before any argv is built:
+
+- `Registry.Plan` and `Registry.Call` return a `*ValidationError`, identically
+  and without spawning;
+- the issue has `Source` `argv-binding`, `Code` `separateValueDash`, and an RFC
+  6901 `Path` to the offending property (or array element, e.g. `/tags/1`);
+- every string beginning with `-` is covered, `-` and `--` included, as is
+  every negative number, and every element of an array bound that way.
+
+Provenance is per binding: the check reads only the elements a binding emits,
+never the command's fixed argv, so a fixed `--recursive` that happens to equal
+an argument is not a refusal.
+
+Use `equals` (`--flag=<value>`) to pass a value that begins with a dash — the
+value stays inside one argv element, where no parser can read it as an option —
+or the attached `short` form (`-l<value>`). Positional values keep the `--`
+escape described above.
 
 ## Compile-time rejections (fail registry load, never silent)
 
