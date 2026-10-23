@@ -81,29 +81,23 @@ func TestCancelCausePublishedBeforeReturn(t *testing.T) {
 	}
 }
 
-func TestNoSignalOnAlreadyReleasedIdentity(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	var afterWait atomic.Bool
+// The identity invariant covers every real group signal, including the ones
+// awaitExit sends while it observes and reaps the leader. Checking it only
+// after Wait has returned cannot see a kill that was moved behind the reap, so
+// this observes every hook and never gates on a later stage.
+func TestEverySignalOwnsLeader(t *testing.T) {
 	var staleSignals atomic.Int32
-	setTestHooks(&hooks{
-		beforeGroupSignal: func(cmd *exec.Cmd) {
-			if !afterWait.Load() {
-				return
-			}
-			if _, err := os.Stat(fmt.Sprintf("/proc/%d", cmd.Process.Pid)); os.IsNotExist(err) {
-				staleSignals.Add(1)
-			}
-		},
-		afterWait: func(*exec.Cmd) {
-			afterWait.Store(true)
-			cancel()
-		},
-	})
+	setTestHooks(&hooks{beforeGroupSignal: func(cmd *exec.Cmd) {
+		if _, err := os.Stat(fmt.Sprintf("/proc/%d", cmd.Process.Pid)); os.IsNotExist(err) {
+			staleSignals.Add(1)
+		}
+	}})
 	defer setTestHooks(nil)
 	r := fixtureRegistry(t, map[string]fixtureDef{"quick": {env: map[string]string{"GO_WANT_HELPER_PROCESS": "1", "FAKE_OUTPUT": "quiet", "GORACE": "atexit_sleep_ms=0"}, timeout: "60s"}})
-	_, err := r.Call(ctx, mustTool(t, r, "quick"), map[string]any{})
-	if staleSignals.Load() != 0 {
-		t.Fatalf("sent %d group signals after Wait reaped the leader and /proc/PID disappeared (late cancel plus post-exit kill); Call error=%v", staleSignals.Load(), err)
+	if _, err := r.Call(context.Background(), mustTool(t, r, "quick"), map[string]any{}); err != nil {
+		t.Fatal(err)
+	}
+	if n := staleSignals.Load(); n != 0 {
+		t.Fatalf("%d real group signals after /proc/leader disappeared", n)
 	}
 }
