@@ -50,6 +50,14 @@ const (
 	// process group (setsid) can still hold them, and its output is cut rather
 	// than blocking the call. A cut drain marks the output truncated.
 	drainGrace = 500 * time.Millisecond
+
+	// cancelDrainGrace bounds the same wait when the caller's context stopped
+	// the run. Cancellation should return promptly even when a descendant that
+	// left the group still holds a capture pipe, so it gets a far shorter bound
+	// than a normal exit or a timeout: the group kill has already closed every
+	// write end the group owned, and only the kernel's pipe buffer can still be
+	// in flight.
+	cancelDrainGrace = 25 * time.Millisecond
 )
 
 // terminationCause is the single reason a run's process was stopped. Exit,
@@ -258,7 +266,12 @@ func (p *Plan) run(ctx context.Context) (*Result, error) {
 
 	cause, ctxErr := ex.termination()
 
+	// A cancelled call must return promptly even when a descendant that left
+	// the group still holds a capture pipe.
 	grace := drainGrace
+	if cause == causeCancel {
+		grace = cancelDrainGrace
+	}
 	drained := make(chan struct{})
 	go func() { copies.Wait(); close(drained) }()
 	cut := false

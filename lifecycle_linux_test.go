@@ -162,3 +162,29 @@ func TestBoundedDrainMarksTruncation(t *testing.T) {
 		t.Fatal("a bounded drain cut a still-open stream but reports complete output")
 	}
 }
+
+// Cancellation returns promptly even when an escaped descendant still holds
+// the capture pipes: the shorter cancel drain bound keeps it under 100 ms.
+func TestCancelWithPipeEscaperIsPrompt(t *testing.T) {
+	r, tool, ready := escaperRegistry(t, "leader-sleep")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { _, err := r.Call(ctx, tool, map[string]any{}); done <- err }()
+	waitForFile(t, ready, 5*time.Second)
+	start := time.Now()
+	cancel()
+	select {
+	case err := <-done:
+		elapsed := time.Since(start)
+		t.Logf("cancel returned in %s: %T", elapsed, err)
+		if !IsCanceled(err) {
+			t.Fatalf("cancel error = %v", err)
+		}
+		if elapsed > 100*time.Millisecond {
+			t.Fatalf("cancel took %s with a setsid pipe holder, want < 100ms", elapsed)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("cancel stuck")
+	}
+}

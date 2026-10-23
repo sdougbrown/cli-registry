@@ -43,6 +43,9 @@ library's, and makes the library's own execution stop, reap and report.
   a timeout; the pipe drain is bounded instead. A drain cut at that bound, like
   a failed capture read, sets `Truncated`, so a short stream is never reported
   as complete output.
+- A cancelled call drains the capture with a 25 ms bound instead of the 500 ms
+  a normal exit or a timeout gets, so cancellation returns promptly even when a
+  descendant that left the process group still holds the pipes.
 - A context that has ended — cancelled, or already past its deadline when the
   call starts — kills the process group and returns `*TimeoutError`, the type
   v0.1.0 returned, with `Cause` set to `ctx.Err()`; `IsTimeout` stays true for
