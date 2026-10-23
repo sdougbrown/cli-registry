@@ -125,12 +125,13 @@ through `Finish`.
 
 - the child runs in its own process group, with stdin closed and both streams
   captured up to 1 MiB each;
-- a cancelled context kills the process group within milliseconds and returns
+- a cancelled context stops the run within milliseconds (the whole process
+  group on the Linux path, only the leader on the fallback below) and returns
   `*cliregistry.TimeoutError` with `Cause` set to `ctx.Err()` (as v0.1.0
   classified it); `IsTimeout` stays true, and `IsCanceled` — or `errors.Is`
   against `context.Canceled` / `context.DeadlineExceeded` — reports the
   context cause;
-- the plan's own timeout kills the group and returns
+- the plan's own timeout stops it the same way and returns
   `*cliregistry.TimeoutError` with a nil `Cause` (`IsTimeout`);
 - on Linux every exit kills the rest of the process group, so same-group
   descendants do not outlive the call, and the group is signalled only while
@@ -146,10 +147,13 @@ that leaves the group with `setsid` survives the call; its pipe is cut at the
 drain bound rather than waited on, and the output it still held is marked
 truncated. Windows has no process groups here: only the direct child is killed
 (on cancellation, on timeout and after exit through the handle the runtime
-holds), so descendants survive. Other Unix platforms reap the leader before the
-final group kill — only Linux observes the exit without reaping it — so
-elsewhere same-group descendants are cleaned up on cancellation and timeout but
-not after a normal exit.
+holds), so descendants survive. Only Linux observes the exit without reaping
+the leader, which is what keeps the group id valid for a kill. A path without
+that observation — every other Unix platform, and Linux when the non-reaping
+observation fails — never sends a numeric group signal: timeout and
+cancellation stop only the leader through the runtime's guarded process
+operation, so same-group descendants may survive that path too, including on
+cancellation and timeout.
 
 ## Layout
 

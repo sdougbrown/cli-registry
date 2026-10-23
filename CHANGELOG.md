@@ -40,8 +40,11 @@ library's, and makes the library's own execution stop, reap and report.
 - On Linux the rest of the process group is killed after any exit, so
   same-group descendants no longer survive a normal exit, and the group is
   signalled only while the leader's pid still names it. Windows kills only the
-  direct child; other Unix platforms kill the group on cancellation and
-  timeout, but not after a normal exit.
+  direct child. A path without a non-reaping exit observation — other Unix
+  platforms, and Linux when the observation fails — never sends a numeric
+  group signal: timeout and cancellation stop only the leader through the
+  runtime's guarded process operation, so same-group descendants may survive
+  there, including on cancellation and timeout.
 - A descendant that holds the capture pipes no longer turns a normal exit into
   a timeout; the pipe drain is bounded instead. A drain cut at that bound, like
   a failed capture read, sets `Truncated`, so a short stream is never reported
@@ -59,10 +62,11 @@ library's, and makes the library's own execution stop, reap and report.
   a normal exit or a timeout gets, so cancellation returns promptly even when a
   descendant that left the process group still holds the pipes.
 - A context that has ended — cancelled, or already past its deadline when the
-  call starts — kills the process group and returns `*TimeoutError`, the type
-  v0.1.0 returned, with `Cause` set to `ctx.Err()`; `IsTimeout` stays true for
-  it and `IsCanceled` reports the context cause. An already-ended context
-  returns without spawning a process.
+  call starts — stops the run and returns `*TimeoutError`, the type v0.1.0
+  returned, with `Cause` set to `ctx.Err()`; `IsTimeout` stays true for it and
+  `IsCanceled` reports the context cause. The Linux path kills the group; the
+  reap-first fallback stops only the leader. An already-ended context returns
+  without spawning a process.
 
 ### Fixed
 

@@ -28,6 +28,9 @@ type hooks struct {
 	afterCancelSignal func()
 	// afterWait runs after the leader has been reaped.
 	afterWait func(*exec.Cmd)
+	// afterDirectWait runs on the fallback path immediately after the real
+	// cmd.Wait, before the exit is latched and the reaped flag is set.
+	afterDirectWait func(*exec.Cmd)
 }
 
 var testHooks atomic.Pointer[hooks]
@@ -57,5 +60,11 @@ func hookAfterCancelSignal() {
 func hookAfterWait(cmd *exec.Cmd) {
 	if h := testHooks.Load(); h != nil && h.afterWait != nil {
 		h.afterWait(cmd)
+	}
+}
+
+func hookAfterDirectWait(cmd *exec.Cmd) {
+	if h := testHooks.Load(); h != nil && h.afterDirectWait != nil {
+		h.afterDirectWait(cmd)
 	}
 }

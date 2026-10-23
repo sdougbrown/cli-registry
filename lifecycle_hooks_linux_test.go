@@ -10,6 +10,7 @@ package cliregistry
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -99,5 +100,67 @@ func TestEverySignalOwnsLeader(t *testing.T) {
 	}
 	if n := staleSignals.Load(); n != 0 {
 		t.Fatalf("%d real group signals after /proc/leader disappeared", n)
+	}
+}
+
+// The fallback path reaps before it can prove the group id, so a timeout or
+// cancel callback that runs in the window after the real Wait must not send a
+// numeric group signal. It stops the leader through the runtime's guarded
+// operation instead, which is a no-op once the leader was waited for.
+func TestFallbackStopsOnlyTheReleasedLeader(t *testing.T) {
+	for _, cause := range []terminationCause{causeCancel, causeTimeout} {
+		t.Run(fmt.Sprint(cause), func(t *testing.T) {
+			cmd := exec.Command("/bin/true")
+			setProcAttr(cmd)
+			if err := cmd.Start(); err != nil {
+				t.Fatal(err)
+			}
+			e := &executor{cmd: cmd}
+			var staleSignals atomic.Int32
+			var won atomic.Bool
+			var guardedErr error
+			setTestHooks(&hooks{
+				beforeGroupSignal: func(c *exec.Cmd) {
+					if _, err := os.Stat(fmt.Sprintf("/proc/%d", c.Process.Pid)); os.IsNotExist(err) {
+						staleSignals.Add(1)
+					}
+				},
+				afterDirectWait: func(c *exec.Cmd) {
+					if _, err := os.Stat(fmt.Sprintf("/proc/%d", c.Process.Pid)); !os.IsNotExist(err) {
+						t.Errorf("leader identity not released by the fallback Wait: %v", err)
+					}
+					// Run the production callback in the Wait-to-latch window.
+					done := make(chan struct{})
+					go func() {
+						var ctxErr error
+						if cause == causeCancel {
+							ctxErr = context.Canceled
+						}
+						won.Store(e.stop(cause, ctxErr))
+						close(done)
+					}()
+					<-done
+					// The guarded operation is what the fallback path uses.
+					guardedErr = c.Process.Kill()
+				},
+			})
+			defer setTestHooks(nil)
+			if err := e.reapDirect(); err != nil {
+				t.Fatal(err)
+			}
+			latched, _ := e.termination()
+			if !won.Load() {
+				t.Fatal("callback lost; the post-Wait window was not exercised")
+			}
+			if latched != cause {
+				t.Fatalf("latched cause = %v, want %v", latched, cause)
+			}
+			if n := staleSignals.Load(); n != 0 {
+				t.Fatalf("fallback sent %d group signals after Wait released the leader", n)
+			}
+			if !errors.Is(guardedErr, os.ErrProcessDone) {
+				t.Fatalf("guarded process kill after the reap = %v, want %v", guardedErr, os.ErrProcessDone)
+			}
+		})
 	}
 }

@@ -10,24 +10,27 @@ package cliregistry
 // A process group is addressed by the leader's pid, so a group signal is only
 // a signal to the run's own group while that pid still belongs to the leader.
 // Reaping the leader releases the pid, and the kernel may reuse it for an
-// unrelated process group. The engine therefore never signals after reaping:
-// it observes the exit without reaping it (waitid with WNOWAIT where the
-// platform offers it), arbitrates the teardown under one lock, signals the
-// group, and reaps last.
+// unrelated process group. The Linux engine therefore never signals after
+// reaping: it observes the exit without reaping it (waitid with WNOWAIT),
+// arbitrates the teardown under one lock, signals the group, and reaps last.
 //
 // Every group signal follows that protocol:
 //
-//   - The timeout and cancellation paths latch their cause under the lock and
-//     signal only while the cause is still unlatched. On a platform where the
-//     exit is observed without reaping, an unlatched cause means the leader
-//     has not exited yet, so the leader is alive and owns the group id.
+//   - The timeout and cancellation callbacks on that path latch their cause
+//     under the lock and signal the group only while the cause is still
+//     unlatched. An unlatched cause means the leader has not been reaped yet,
+//     so the leader is alive or an unreaped zombie and owns the group id.
 //   - The post-exit teardown signals the group while the leader is an
 //     unreaped zombie, which still owns the group id.
 //
-// Platforms without a non-reaping exit observation (everything except Linux
-// today, see observeExitBeforeReap) fall back to reaping first and signal the
-// group afterwards only where the platform pins the process by handle rather
-// than by pid (Windows); see awaitExit.
+// A path without a non-reaping exit observation (see awaitExit) cannot make
+// that promise: it reaps first, so a numeric group signal could address a
+// released pid. Its timeout and cancellation callbacks therefore stop only
+// the leader, through the runtime's guarded Process.Kill, which refuses to
+// signal a process that has already been waited for. That path never sends a
+// numeric group signal, and same-group descendants may survive it; see
+// reapDirect. Windows kills through the process handle the runtime holds, so
+// the same guarded operation stays valid there after the reap.
 
 import (
 	"context"
@@ -81,9 +84,13 @@ type executor struct {
 	cause  terminationCause
 	ctxErr error // ctx.Err(), when cause is causeCancel
 	reaped bool  // the leader has been reaped; its pid may be reused
+	// fallback is set before a reap that does not observe the exit first
+	// (reapDirect). Group signals are unsafe on that path, so stop uses the
+	// runtime's guarded per-process operation instead.
+	fallback bool
 }
 
-// stop latches cause as the run's termination cause and signals the group. It
+// stop latches cause as the run's termination cause and stops the process. It
 // reports whether it won the race. The cause is stored before the signal, so
 // no observer of a dead process can miss it.
 func (e *executor) stop(cause terminationCause, ctxErr error) bool {
@@ -94,7 +101,14 @@ func (e *executor) stop(cause terminationCause, ctxErr error) bool {
 	}
 	e.cause = cause
 	e.ctxErr = ctxErr
-	killProcessGroup(e.cmd)
+	if e.fallback {
+		// The leader may already have been reaped: a numeric group signal
+		// could address a reused pid. Stop only the leader, through the
+		// operation the runtime refuses once the process was waited for.
+		killProcessLeader(e.cmd)
+	} else {
+		killProcessGroup(e.cmd)
+	}
 	return true
 }
 
@@ -128,11 +142,20 @@ func (e *executor) reapPeeked() error {
 	return err
 }
 
-// reapDirect finishes a run on a platform without a non-reaping exit
-// observation: the leader is reaped first, and the group is signalled
-// afterwards only where that is still identity-safe.
+// reapDirect finishes a run without a non-reaping exit observation: the leader
+// is reaped first, and the group is signalled afterwards only where that is
+// still identity-safe (Windows, through the process handle). Before the reap,
+// the executor is marked as a fallback so a timeout or cancellation callback
+// that runs in the Wait-to-lock window stops only the leader through the
+// runtime's guarded operation instead of sending a numeric group signal to an
+// identity that may already be released. Same-group descendants can therefore
+// survive on this path.
 func (e *executor) reapDirect() error {
+	e.mu.Lock()
+	e.fallback = true
+	e.mu.Unlock()
 	err := e.cmd.Wait()
+	hookAfterDirectWait(e.cmd)
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if e.cause == causeNone {

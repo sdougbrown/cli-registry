@@ -12,6 +12,13 @@ func setProcAttr(cmd *exec.Cmd) {}
 // killProcessGroup kills the direct child on Windows. There is no portable
 // process-group kill; descendants are best-effort reaped by the OS.
 func killProcessGroup(cmd *exec.Cmd) {
+	killProcessLeader(cmd)
+}
+
+// killProcessLeader stops the leader through the process handle the runtime
+// holds (TerminateProcess). The handle stays valid after the leader is reaped,
+// which is why Windows may use the fallback path without a group signal.
+func killProcessLeader(cmd *exec.Cmd) {
 	if cmd.Process != nil {
 		_ = cmd.Process.Kill()
 	}

@@ -96,16 +96,17 @@
 //
 //   - The child runs in its own process group with stdin closed and both
 //     streams captured up to 1 MiB each.
-//   - A cancelled or already-cancelled context kills the process group
-//     immediately and returns a *TimeoutError with Cause set to ctx.Err(), the
-//     same error family v0.1.0 returned; IsTimeout is true for it, and
-//     IsCanceled (or errors.Is against context.Canceled /
+//   - A cancelled or already-cancelled context stops the run immediately (the
+//     process group on the Linux path; only the leader on the fallback
+//     described below) and returns a *TimeoutError with Cause set to
+//     ctx.Err(), the same error family v0.1.0 returned; IsTimeout is true for
+//     it, and IsCanceled (or errors.Is against context.Canceled /
 //     context.DeadlineExceeded) reports the context cause.
-//   - The timeout kills the process group and returns a *TimeoutError with a
-//     nil Cause (IsTimeout).
-//   - Every exit kills the rest of the process group (see the platform notes
-//     below), so same-group descendants do not outlive the call, and the group
-//     is signalled only while the leader's pid still names it.
+//   - The timeout stops the run the same way and returns a *TimeoutError with
+//     a nil Cause (IsTimeout).
+//   - Every exit on the Linux path kills the rest of the process group, so
+//     same-group descendants do not outlive the call there, and the group is
+//     signalled only while the leader's pid still names it.
 //   - A descendant that holds the capture pipes does not turn a normal exit
 //     into a timeout: the pipes are drained after the group kill, bounded at
 //     500 ms (25 ms on cancellation). A drain cut at that bound, like a failed
@@ -115,8 +116,11 @@
 // leaves the group with setsid survives; its pipe is cut at the drain bound
 // instead of being waited on. Windows has no process groups here — only the
 // direct child is killed — so descendants survive. Only Linux observes the
-// exit without reaping the leader, so other Unix platforms clean up same-group
-// descendants on cancellation and timeout but not after a normal exit.
+// exit without reaping the leader, which is what keeps the group id valid. A
+// path without that observation (every other Unix platform, and Linux when
+// waitid fails) never sends a numeric group signal: timeout and cancellation
+// stop only the leader through the runtime's guarded process operation, so
+// same-group descendants may survive that path as well.
 //
 // # Typed errors
 //

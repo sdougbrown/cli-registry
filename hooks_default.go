@@ -13,3 +13,4 @@ func hookBeforeGroupSignal(*exec.Cmd) {}
 func hookAfterTimerSignal()           {}
 func hookAfterCancelSignal()          {}
 func hookAfterWait(*exec.Cmd)         {}
+func hookAfterDirectWait(*exec.Cmd)   {}
