@@ -56,7 +56,8 @@ type Output struct {
 
 // Plan validates args and builds the command without running it. A
 // *ValidationError means nothing was built; it is returned before any argv or
-// env work.
+// env work, for the schema's own issues and for a value a separate-value
+// binding would place where the command reads an option.
 //
 // Plan touches no process and reads no host environment: env:NAME references
 // stay unresolved (Env[].From) so the host can resolve them against its own
@@ -73,6 +74,9 @@ func (r *Registry) Plan(tool Tool, args map[string]any, opt ...Option) (*Plan, e
 
 	// validate before building anything
 	if issues := t.schema.Validate(args); len(issues) > 0 {
+		return nil, &ValidationError{Tool: t.name, Issues: issues}
+	}
+	if issues := t.separateValueIssues(args); len(issues) > 0 {
 		return nil, &ValidationError{Tool: t.name, Issues: issues}
 	}
 

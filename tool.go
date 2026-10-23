@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -398,6 +399,76 @@ func encodeScalar(v any) string {
 }
 
 func needsDashEscape(s string) bool { return strings.HasPrefix(s, "-") && s != "-" }
+
+// codeSeparateValueDash is the issue code for a value that a binding emitting
+// its value as a separate argv element would place where the command reads an
+// option. The issue's Source is "argv-binding" and its Path is an RFC 6901
+// pointer to the offending value; specs/argv.md names the code.
+const codeSeparateValueDash = "separateValueDash"
+
+// separateValueIssues reports every value that a separate-value binding would
+// emit as an argv element of its own, when that element begins with a dash.
+//
+// A "space" binding emits `--flag <value>`, so a value of `--recursive`, `--`
+// or `-1` sits where the command parses an option and is indistinguishable from
+// one the manifest declared. Only the binding knows that element came from an
+// argument, so the value is refused here for the property that bound it, before
+// any argv is built, and for every element of an array. The check runs on the
+// encoded value, so a negative number is covered as well as a string.
+//
+// "equals" (`--flag=<value>`) and the attached "short" form (`-l<value>`) keep
+// the value inside one element, where no parser can read it as an option, and a
+// positional value keeps buildArgv's "--" escape. Neither is inspected here.
+func (t *tool) separateValueIssues(args map[string]any) []StructuralIssue {
+	var issues []StructuralIssue
+	for _, b := range t.bindings {
+		// The only style that emits a separate value. A style that starts to
+		// emit one must be added here with it, or this guard has a hole.
+		if b.style != "space" {
+			continue
+		}
+		v, present := args[b.property]
+		if !present {
+			continue
+		}
+		if arr, ok := v.([]any); ok {
+			for i, el := range arr {
+				if isScalar(el) {
+					s := encodeScalar(el)
+					if strings.HasPrefix(s, "-") {
+						issues = append(issues, separateValueDashIssue(b, propertyPointer(b.property)+"/"+strconv.Itoa(i), s))
+					}
+				}
+			}
+			continue
+		}
+		if isScalar(v) {
+			s := encodeScalar(v)
+			if strings.HasPrefix(s, "-") {
+				issues = append(issues, separateValueDashIssue(b, propertyPointer(b.property), s))
+			}
+		}
+	}
+	return issues
+}
+
+func separateValueDashIssue(b binding, path, value string) StructuralIssue {
+	return StructuralIssue{
+		Source: "argv-binding",
+		Code:   codeSeparateValueDash,
+		Path:   path,
+		Message: fmt.Sprintf("property %q: value %q begins with a dash, and a %q binding emits it "+
+			"as a separate argv element, where the command reads it as an option; "+
+			"use style %q to pass a value that begins with a dash",
+			b.property, value, b.style, "equals"),
+	}
+}
+
+// propertyPointer is the RFC 6901 pointer to a bound top-level property.
+func propertyPointer(property string) string {
+	r := strings.NewReplacer("~", "~0", "/", "~1")
+	return "/" + r.Replace(property)
+}
 
 // resolveDir returns the absolute, symlink-resolved working directory the
 // manifest or WithCWD fixes, or "" when the host decides (cwd.mode inherit, no

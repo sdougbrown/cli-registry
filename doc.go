@@ -94,6 +94,14 @@
 // its own error before calling Finish. The same killed-process output is a
 // *TimeoutError through Call and an *ExecError through Finish.
 //
+// Plan also refuses an argument it cannot place safely: a value bound with
+// style "space" is its own argv element after the flag, so one that begins
+// with "-" ("-", "--" and negative numbers included) would be read by the
+// command as an option, and is a *ValidationError naming the property. Bind
+// the property with style "equals" (--flag=value) to pass a dash-leading
+// value; the attached short form and the positional "--" escape are
+// unaffected. specs/argv.md states the rule.
+//
 // A Plan comes from Registry.Plan; the zero value is not usable.
 //
 // # Process lifecycle (Call's engine)
@@ -130,7 +138,10 @@
 //
 //	LoadError        — registry load / duplicate tool name
 //	DefinitionError  — schema or argv binding that fails compilation
-//	ValidationError  — args fail the input schema (carries []StructuralIssue)
+//	ValidationError  — args were refused before anything was built: they fail
+//	                   the input schema, or a value a binding would emit as a
+//	                   separate argv element would be read as an option
+//	                   (carries []StructuralIssue)
 //	ExecError        — process ran but exited outside success_exit_codes;
 //	                   carries Stdout, Stderr and Truncated
 //	TimeoutError     — the process was stopped before it finished (distinct
@@ -141,7 +152,7 @@
 //	                   deprecated alias).
 //
 //	type StructuralIssue struct {
-//	    Source string // "json-schema"
+//	    Source string // "json-schema", or "argv-binding" for the argv contract
 //	    Code   string
 //	    Path   string // RFC 6901 pointer
 //	}

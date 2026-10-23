@@ -35,6 +35,17 @@ library's, and makes the library's own execution stop, reap and report.
 
 ### Changed
 
+- Security fix: a value that a `style: space` binding emits as its own argv
+  element after its flag — every element of an array bound that way included —
+  is now refused as a `*ValidationError` when it begins with `-`, `-` and `--`
+  and negative numbers included, before anything is built. Such a value sits
+  where the command parses options, so a call could enable a flag the manifest
+  never declared (`--color --recursive`) or consume a `--` delimiter; v0.1.0
+  accepted it and passed it through. The issue names the property and has
+  `Source` `argv-binding` and `Code` `separateValueDash`. Bind the property
+  with `style: equals` (`--flag=<value>`) to pass a value that begins with a
+  dash; `equals` and the attached `short` form are unaffected, and positional
+  values keep their `--` escape. `specs/argv.md` states the rule.
 - `Registry.Call` is now `Plan` plus the library's own process engine; callers
   that do not plan observe the same behavior apart from the fixes below.
 - On Linux the rest of the process group is killed after any exit, so
