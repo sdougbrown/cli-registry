@@ -16,6 +16,12 @@ import (
 // default, in order, before the manifest's declared env. A host that runs a
 // plan itself should copy the same names out of its own (scrubbed)
 // environment; Plan.Env holds only the manifest's declarations.
+//
+// ResolveEnv reads it once per call, without synchronization, so treat it as
+// read-only: a host that appends to or replaces it changes the allow-list for
+// every later call in the process, and mutating it while another call resolves
+// its environment is a data race. A host that needs more names should surface
+// them through the getenv it passes to ResolveEnv.
 var BenignEnv = []string{"PATH", "HOME", "LANG", "LC_ALL", "TMPDIR"}
 
 // EnvBinding is one manifest-declared environment variable, unresolved. Value

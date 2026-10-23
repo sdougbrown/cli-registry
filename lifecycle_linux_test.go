@@ -73,6 +73,10 @@ func escaperRegistry(t *testing.T, mode string) (*Registry, Tool, string) {
 	t.Helper()
 	becomeSubreaper(t)
 	ready := filepath.Join(t.TempDir(), "escaped.pid")
+	// GORACE is read by the Go race runtime inside the child, which is this test
+	// binary re-executed and therefore race-instrumented under -race. The value
+	// also keeps a normal child exit cheap; TestRepeatedCallsDoNotLeakFDsOrGoroutines
+	// carries the measurement.
 	r := fixtureRegistry(t, map[string]fixtureDef{"escape": {env: map[string]string{"ESCAPER_MODE": mode, "ESCAPER_READY": ready, "GORACE": "atexit_sleep_ms=0"}, timeout: "10s"}})
 	r.tools["escape"].command[1] = "-test.run=^TestEscaperProcess$"
 	t.Cleanup(func() {
@@ -100,6 +104,10 @@ func TestRepeatedCallsDoNotLeakFDsOrGoroutines(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// GORACE is read by the Go race runtime inside the child, which is this test
+	// binary re-executed and therefore race-instrumented under -race.
+	// atexit_sleep_ms=0 drops the 1 s sleep it takes at exit; without it this
+	// test costs ~26 s instead of ~1.2 s.
 	r := fixtureRegistry(t, map[string]fixtureDef{"quick": {env: map[string]string{"GO_WANT_HELPER_PROCESS": "1", "FAKE_OUTPUT": "quiet", "GORACE": "atexit_sleep_ms=0"}}})
 	tool := mustTool(t, r, "quick")
 	for i := 0; i < 100; i++ {
