@@ -184,7 +184,10 @@ checks the vendored fixtures' integrity; `make verify` runs the whole gate.
   `env:NAME` passthrough must be declared, and a host that plans the call
   resolves the reference against its own (scrubbed) environment.
 - **cwd containment** — optional `allow` roots, canonicalized.
-- **Timeout + process-group kill** — descendants are reaped.
+- **Timeout + group kill** — on the Linux path the whole process group is
+  killed while the leader's pid still names it, on every exit as well as on
+  cancellation and timeout. The fallback path stops only the leader, so
+  same-group descendants may survive there.
 - **HTTP daemon** — loopback bind by default, bearer auth, Host/Origin checks,
   1 MiB request limit.
 

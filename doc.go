@@ -23,7 +23,7 @@
 //
 //	type Result struct {
 //	    Stdout, Stderr []byte
-//	    Truncated      bool       // output hit the capture limit
+//	    Truncated      bool       // not the whole stream: the capture limit, a forced drain cut, or a failed capture read
 //	    ExitCode       int
 //	    Decoded        any        // per output.mode (raw | json | json-pointer)
 //	    Duration       time.Duration
@@ -41,6 +41,7 @@
 //	p, err := reg.Plan(tool, args)
 //	if err != nil { ... }                       // *ValidationError: nothing built
 //	env, err := p.ResolveEnv(scrubbedLookup)    // resolve env:NAME against the host's view
+//	if err != nil { ... }                       // a declared reference the host cannot resolve
 //	dir := p.Dir
 //	if dir == "" { dir = sessionDir }           // the manifest left it to the host
 //	out, err := myExecutor(ctx, p.Argv, env, dir, p.Timeout)
