@@ -60,6 +60,9 @@ library's, and makes the library's own execution stop, reap and report.
 
 ### Fixed
 
+- A bare `env:` binding is a missing-reference error again, as in v0.1.0,
+  instead of becoming an empty literal. `EnvBinding.Reference` records that a
+  binding is a reference, so an empty `From` can no longer mean "literal".
 - A `style: space` array binding emitted its flag once before the element loop
   and again for every element (`--tag --tag one --tag two`); each element now
   emits `--flag <element>`, and an empty array emits nothing. `specs/argv.md`

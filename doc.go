@@ -50,9 +50,10 @@
 //	    Timeout time.Duration // the manifest's, or WithTimeout's
 //	}
 //	type EnvBinding struct {
-//	    Name  string
-//	    Value string // a literal, when From is ""
-//	    From  string // the host variable a manifest `env:NAME` refers to
+//	    Name      string
+//	    Value     string // a literal, when Reference is false
+//	    From      string // the host variable a manifest `env:NAME` refers to
+//	    Reference bool   // true for an `env:NAME` reference; From may be empty
 //	}
 //	var BenignEnv []string        // variables Call copies from the host by default
 //

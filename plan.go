@@ -19,12 +19,15 @@ import (
 var BenignEnv = []string{"PATH", "HOME", "LANG", "LC_ALL", "TMPDIR"}
 
 // EnvBinding is one manifest-declared environment variable, unresolved. Value
-// is the literal a manifest declares; From names the host variable a manifest
-// `env:NAME` reference points at. Exactly one of the two is set.
+// is the literal a manifest declares; Reference marks an `env:NAME` reference
+// and From names the host variable it points at. From may be empty — `env:` is
+// a reference to no variable, which is a missing reference rather than a
+// literal, exactly as in v0.1.0.
 type EnvBinding struct {
-	Name  string
-	Value string
-	From  string
+	Name      string
+	Value     string
+	From      string
+	Reference bool
 }
 
 // Plan is one validated, fully built command that has not been run. A Plan is
@@ -91,7 +94,7 @@ func (r *Registry) Plan(tool Tool, args map[string]any, opt ...Option) (*Plan, e
 	for _, name := range names {
 		v := t.env[name]
 		if from, ok := strings.CutPrefix(v, "env:"); ok {
-			env = append(env, EnvBinding{Name: name, From: from})
+			env = append(env, EnvBinding{Name: name, From: from, Reference: true})
 		} else {
 			env = append(env, EnvBinding{Name: name, Value: v})
 		}
@@ -116,7 +119,8 @@ func (r *Registry) Plan(tool Tool, args map[string]any, opt ...Option) (*Plan, e
 // ResolveEnv turns the plan's env bindings into "NAME=value" entries for an
 // executor, using getenv to look host variables up. BenignEnv names are copied
 // first, then the manifest's bindings, then WithEnv overrides. A declared
-// env:NAME that getenv does not return is an error.
+// env:NAME that getenv does not return is an error, and a bare `env:` (a
+// reference that names no variable) is the same missing-reference error.
 //
 // A host passes its own lookup (typically over a scrubbed environment) rather
 // than os.LookupEnv, so a manifest reference can never read a variable the
@@ -136,7 +140,10 @@ func (p *Plan) ResolveEnv(getenv func(string) (string, bool)) ([]string, error) 
 		}
 	}
 	for _, b := range p.Env {
-		if b.From != "" {
+		if b.Reference {
+			if b.From == "" {
+				return nil, fmt.Errorf("referenced env %q not present", b.From)
+			}
 			v, ok := getenv(b.From)
 			if !ok {
 				return nil, fmt.Errorf("referenced env %q not present", b.From)

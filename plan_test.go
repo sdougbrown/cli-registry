@@ -177,7 +177,7 @@ func TestPlanMatchesCallDirEnvAndTimeout(t *testing.T) {
 		}
 		want := []EnvBinding{
 			{Name: "FAKE_OUTPUT", Value: "probe"},
-			{Name: "FROM_HOST", From: "PLAN_HOST"},
+			{Name: "FROM_HOST", From: "PLAN_HOST", Reference: true},
 			{Name: "GO_WANT_HELPER_PROCESS", Value: "1"},
 			{Name: "LITERAL", Value: "lit"},
 		}
@@ -280,7 +280,7 @@ func TestPlanResolvesEnvOnlyOnHostDemand(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, b := range p.Env {
-		if b.From == "PLAN_HOST" && b.Value != "" {
+		if b.Reference && b.Value != "" {
 			t.Fatalf("Plan resolved the host env: %+v", b)
 		}
 	}
@@ -396,5 +396,25 @@ func TestFinishReportsDecodeFailure(t *testing.T) {
 	_, finErr := p.Finish(Output{Stdout: []byte("not json")})
 	if finErr == nil || finErr.Error() != callErr.Error() {
 		t.Fatalf("Finish error = %v, want %v", finErr, callErr)
+	}
+}
+
+// A bare `env:` names no host variable, so it is a missing reference — as it
+// was in v0.1.0 — not an empty literal.
+func TestEmptyReferenceIsMissing(t *testing.T) {
+	r := fixtureRegistry(t, map[string]fixtureDef{"empty-ref": {env: map[string]string{"TARGET": "env:"}}})
+	p, err := r.Plan(mustTool(t, r, "empty-ref"), map[string]any{})
+	if err != nil {
+		return
+	}
+	env, err := p.ResolveEnv(func(string) (string, bool) { return "", false })
+	if err == nil {
+		t.Fatalf("missing env reference silently became literal: bindings=%+v env=%q", p.Env, env)
+	}
+	if !strings.Contains(err.Error(), "referenced env") {
+		t.Fatalf("error = %v, want a missing-reference error", err)
+	}
+	if _, err := r.Call(context.Background(), mustTool(t, r, "empty-ref"), map[string]any{}); err == nil {
+		t.Fatal("Call accepted a bare env: reference")
 	}
 }
