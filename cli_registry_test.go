@@ -297,10 +297,10 @@ func TestInvalidArgsDoNotSpawn(t *testing.T) {
 	dir := t.TempDir()
 	marker := filepath.Join(dir, "ran.marker")
 	tool := mustTool(t, r, "marker")
-	// name tool env has no FAKE_MARKER; set it on the manifest? Instead use env option won't add FAKE_MARKER (not declared).
-	// Instead: a required field missing must fail validation, proving no spawn.
-	res := &struct{ ok bool }{}
-	// We can't set FAKE_MARKER via this tool (env allow-list). Use WithEnv? that only sets declared? WithEnv adds to opts.env regardless of declared. But helper only writes marker if FAKE_MARKER set.
+	// WithEnv sets the variable regardless of the manifest's env allow-list, and
+	// the helper writes the marker whenever FAKE_MARKER is set. So the marker
+	// would exist if the process ran, and its absence proves validation refused
+	// the call before any spawn.
 	_, err := r.Call(context.Background(), tool, map[string]any{}, WithEnv("FAKE_MARKER", marker))
 	var ve *ValidationError
 	if !errors.As(err, &ve) {
@@ -312,7 +312,6 @@ func TestInvalidArgsDoNotSpawn(t *testing.T) {
 	if !veIssues(ve, "required", "/name") {
 		t.Fatalf("expected required @ /name issue, got %v", ve.Issues)
 	}
-	_ = res
 }
 
 func veIssues(ve *ValidationError, code, path string) bool {
