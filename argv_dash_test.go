@@ -376,3 +376,88 @@ func assertNotRun(t *testing.T, marker string) {
 		t.Fatal("a process ran for a refused call: marker exists")
 	}
 }
+
+// dashString is a named string type. encodeScalar renders it through
+// fmt.Sprint, so it reaches argv exactly like a plain string.
+type dashString string
+
+// TestSeparateValueArrayWithoutItemsRefused covers the reachable path where the
+// schema does not validate array elements: an array with no items schema leaves
+// every element to the emitter, so the guard must inspect what the emitter
+// encodes regardless of the element's Go type.
+func TestSeparateValueArrayWithoutItemsRefused(t *testing.T) {
+	r := fixtureRegistry(t, map[string]fixtureDef{
+		"space": probeTool(nil, fixtureDef{
+			properties: map[string]any{"tags": map[string]any{"type": "array"}},
+			bindings:   []map[string]any{{"property": "tags", "style": "space", "flag": "--tag"}},
+		}),
+	})
+	tool := mustTool(t, r, "space")
+	marker := filepath.Join(t.TempDir(), "ran.marker")
+
+	for _, tc := range []struct {
+		name string
+		arg  any
+	}{
+		{"named string", dashString("-x")},
+		{"plain string", "-x"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			args := map[string]any{"tags": []any{tc.arg}}
+			ve := assertDashRefusal(t, planErr(r, tool, args, marker), "/tags/0", "tags", "-x")
+			if len(ve.Issues) != 1 {
+				t.Fatalf("issues = %v, want only the refused element", ve.Issues)
+			}
+			assertDashRefusal(t, callErr(r, tool, args, marker), "/tags/0", "tags", "-x")
+			assertNotRun(t, marker)
+		})
+	}
+
+	// Control: a named-string element that does not dash-lead is emitted and
+	// the call runs, so the absent marker above means refused, not broken.
+	res, err := r.Call(context.Background(), tool, map[string]any{"tags": []any{dashString("ok"), dashString("fine")}}, WithEnv("FAKE_MARKER", marker))
+	if err != nil {
+		t.Fatalf("control call: %v", err)
+	}
+	want := append(fixturePrefix(), "--tag", "ok", "--tag", "fine")
+	if got := decodeProbe(t, res).Args; !slices.Equal(got, want) {
+		t.Fatalf("control argv = %q, want %q", got, want)
+	}
+	if _, err := os.Stat(marker); err != nil {
+		t.Fatalf("control call did not run: %v", err)
+	}
+}
+
+// TestPropertyPointerEscapesRFC6901 pins propertyPointer's escaping order for
+// the two RFC 6901 special characters.
+func TestPropertyPointerEscapesRFC6901(t *testing.T) {
+	r := fixtureRegistry(t, map[string]fixtureDef{
+		"space": probeTool(nil, fixtureDef{
+			properties: map[string]any{
+				"a/b": map[string]any{"type": "string"},
+				"a~b": map[string]any{"type": "string"},
+			},
+			bindings: []map[string]any{
+				{"property": "a/b", "style": "space", "flag": "--slash"},
+				{"property": "a~b", "style": "space", "flag": "--tilde"},
+			},
+		}),
+	})
+	tool := mustTool(t, r, "space")
+	marker := filepath.Join(t.TempDir(), "ran.marker")
+
+	for _, tc := range []struct {
+		property string
+		path     string
+	}{
+		{"a/b", "/a~1b"},
+		{"a~b", "/a~0b"},
+	} {
+		t.Run(tc.property, func(t *testing.T) {
+			args := map[string]any{tc.property: "--recursive"}
+			assertDashRefusal(t, planErr(r, tool, args, marker), tc.path, tc.property, "--recursive")
+			assertDashRefusal(t, callErr(r, tool, args, marker), tc.path, tc.property, "--recursive")
+			assertNotRun(t, marker)
+		})
+	}
+}

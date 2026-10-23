@@ -414,7 +414,8 @@ const codeSeparateValueDash = "separateValueDash"
 // one the manifest declared. Only the binding knows that element came from an
 // argument, so the value is refused here for the property that bound it, before
 // any argv is built, and for every element of an array. The check runs on the
-// encoded value, so a negative number is covered as well as a string.
+// element the emitter would encode, whatever its Go type, so a named string or
+// a negative number is covered as well as a plain string.
 //
 // "equals" (`--flag=<value>`) and the attached "short" form (`-l<value>`) keep
 // the value inside one element, where no parser can read it as an option, and a
@@ -433,20 +434,16 @@ func (t *tool) separateValueIssues(args map[string]any) []StructuralIssue {
 		}
 		if arr, ok := v.([]any); ok {
 			for i, el := range arr {
-				if isScalar(el) {
-					s := encodeScalar(el)
-					if strings.HasPrefix(s, "-") {
-						issues = append(issues, separateValueDashIssue(b, propertyPointer(b.property)+"/"+strconv.Itoa(i), s))
-					}
+				s := encodeScalar(el)
+				if strings.HasPrefix(s, "-") {
+					issues = append(issues, separateValueDashIssue(b, propertyPointer(b.property)+"/"+strconv.Itoa(i), s))
 				}
 			}
 			continue
 		}
-		if isScalar(v) {
-			s := encodeScalar(v)
-			if strings.HasPrefix(s, "-") {
-				issues = append(issues, separateValueDashIssue(b, propertyPointer(b.property), s))
-			}
+		s := encodeScalar(v)
+		if strings.HasPrefix(s, "-") {
+			issues = append(issues, separateValueDashIssue(b, propertyPointer(b.property), s))
 		}
 	}
 	return issues
