@@ -556,3 +556,47 @@ func TestFinishHasNoLifetimeClassification(t *testing.T) {
 		t.Fatalf("Finish error = %T (%v), want *ExecError", finishErr, finishErr)
 	}
 }
+
+// TestPlanAndCallRefuseAnUnknownTool covers the one boundary of the public
+// Plan contract no other test reaches: a Tool whose Name is not in the
+// registry is a *LoadError, not a panic and not a spawn.
+func TestPlanAndCallRefuseAnUnknownTool(t *testing.T) {
+	marker := filepath.Join(t.TempDir(), "ran.marker")
+	r := fixtureRegistry(t, map[string]fixtureDef{
+		"known": probeTool(nil, fixtureDef{}),
+	})
+	known := mustTool(t, r, "known")
+	absent := Tool{Name: "absent"}
+
+	// Control: this fixture does spawn and write the marker, so an absent
+	// marker below means "refused", not "broken fixture".
+	if _, err := r.Call(context.Background(), known, map[string]any{}, WithEnv("FAKE_MARKER", marker)); err != nil {
+		t.Fatalf("control call: %v", err)
+	}
+	if _, err := os.Stat(marker); err != nil {
+		t.Fatalf("control call did not run: %v", err)
+	}
+	if err := os.Remove(marker); err != nil {
+		t.Fatal(err)
+	}
+
+	p, err := r.Plan(absent, map[string]any{}, WithEnv("FAKE_MARKER", marker))
+	if p != nil {
+		t.Fatalf("Plan built %+v for an unknown tool", p)
+	}
+	var loadErr *LoadError
+	if !errors.As(err, &loadErr) {
+		t.Fatalf("Plan error = %v (%T), want *LoadError", err, err)
+	}
+	if !strings.Contains(err.Error(), "absent") {
+		t.Fatalf("Plan error %q does not name the unknown tool", err)
+	}
+
+	_, err = r.Call(context.Background(), absent, map[string]any{}, WithEnv("FAKE_MARKER", marker))
+	if !errors.As(err, &loadErr) {
+		t.Fatalf("Call error = %v (%T), want *LoadError", err, err)
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Fatal("an unknown tool spawned a process")
+	}
+}

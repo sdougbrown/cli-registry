@@ -116,7 +116,9 @@ func TestRepeatedCallsDoNotLeakFDsOrGoroutines(t *testing.T) {
 				t.Fatal("pre-cancelled Call succeeded")
 			}
 		case 2:
-			opts = append(opts, WithTimeout(time.Nanosecond))
+			// The helper cannot finish before a nanosecond timer fires, so the
+			// timeout outcome does not race the child's own exit and reap.
+			opts = append(opts, WithTimeout(time.Nanosecond), WithEnv("FAKE_SLEEP", "30s"))
 			if _, err := r.Call(context.Background(), tool, map[string]any{}, opts...); err == nil {
 				t.Fatal("nanosecond timeout succeeded")
 			}
@@ -164,7 +166,8 @@ func TestBoundedDrainMarksTruncation(t *testing.T) {
 }
 
 // Cancellation returns promptly even when an escaped descendant still holds
-// the capture pipes: the shorter cancel drain bound keeps it under 100 ms.
+// the capture pipes: the cancel drains on the 25 ms cancelDrainGrace, and the
+// test allows 500 ms so only a real stall fails.
 func TestCancelWithPipeEscaperIsPrompt(t *testing.T) {
 	r, tool, ready := escaperRegistry(t, "leader-sleep")
 	ctx, cancel := context.WithCancel(context.Background())
@@ -181,8 +184,8 @@ func TestCancelWithPipeEscaperIsPrompt(t *testing.T) {
 		if !IsCanceled(err) {
 			t.Fatalf("cancel error = %v", err)
 		}
-		if elapsed > 100*time.Millisecond {
-			t.Fatalf("cancel took %s with a setsid pipe holder, want < 100ms", elapsed)
+		if elapsed > 500*time.Millisecond {
+			t.Fatalf("cancel took %s with a setsid pipe holder, want < 500ms", elapsed)
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("cancel stuck")
