@@ -133,10 +133,25 @@ func (p *Plan) run(ctx context.Context) (*Result, error) {
 		Duration:  time.Since(start),
 	}
 	if timedOut.Load() {
-		return nil, &TimeoutError{Tool: p.Tool, Args: p.Argv, Timout: p.Timeout}
+		return nil, &TimeoutError{
+			Tool:      p.Tool,
+			Args:      p.Argv,
+			Timeout:   p.Timeout,
+			Timout:    p.Timeout,
+			Stdout:    out.Stdout,
+			Stderr:    out.Stderr,
+			Truncated: out.Truncated,
+		}
 	}
 	if cancelled.Load() {
-		return nil, &CanceledError{Tool: p.Tool, Args: p.Argv, Err: ctx.Err()}
+		return nil, &CanceledError{
+			Tool:      p.Tool,
+			Args:      p.Argv,
+			Err:       ctx.Err(),
+			Stdout:    out.Stdout,
+			Stderr:    out.Stderr,
+			Truncated: out.Truncated,
+		}
 	}
 	code, err := exitCodeOf(waitErr)
 	if err != nil {

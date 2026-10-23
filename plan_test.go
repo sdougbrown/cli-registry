@@ -349,7 +349,7 @@ func TestFinishAgreesWithCall(t *testing.T) {
 				if !errors.As(callErr, &ee) {
 					t.Fatalf("Call error = %v, want ExecError", callErr)
 				}
-				out = Output{Stderr: ee.Stderr, ExitCode: ee.ExitCode}
+				out = Output{Stdout: ee.Stdout, Stderr: ee.Stderr, Truncated: ee.Truncated, ExitCode: ee.ExitCode}
 			}
 
 			finRes, finErr := p.Finish(out)
@@ -369,8 +369,8 @@ func TestFinishAgreesWithCall(t *testing.T) {
 				var want, got *ExecError
 				errors.As(callErr, &want)
 				errors.As(finErr, &got)
-				if got.ExitCode != want.ExitCode {
-					t.Fatalf("Finish ExecError exit %d, Call exit %d", got.ExitCode, want.ExitCode)
+				if got.ExitCode != want.ExitCode || got.Truncated != want.Truncated || string(got.Stdout) != string(want.Stdout) || string(got.Stderr) != string(want.Stderr) {
+					t.Fatalf("Finish ExecError %+v disagrees with Call ExecError %+v", got, want)
 				}
 			}
 		})

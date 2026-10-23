@@ -58,12 +58,15 @@ func (e *ValidationError) Error() string {
 }
 
 // ExecError indicates the process ran to completion but exited outside the
-// tool's success exit codes.
+// tool's success exit codes. It carries what the process wrote before it
+// exited, so a host can show the output that came with the failure.
 type ExecError struct {
-	Tool     string
-	Args     []string
-	ExitCode int
-	Stderr   []byte
+	Tool      string
+	Args      []string
+	ExitCode  int
+	Stdout    []byte
+	Stderr    []byte
+	Truncated bool
 }
 
 func (e *ExecError) Error() string {
@@ -71,24 +74,40 @@ func (e *ExecError) Error() string {
 }
 
 // TimeoutError indicates the process exceeded its timeout and was terminated
-// (whole process group).
+// (whole process group). It carries the partial output captured before the
+// kill.
 type TimeoutError struct {
-	Tool   string
-	Args   []string
-	Timout time.Duration
+	Tool string
+	Args []string
+	// Timeout is how long the process was allowed to run.
+	Timeout time.Duration
+	// Timout is a deprecated alias for Timeout, kept so callers that read or
+	// set the misspelled field keep working. Both are set.
+	Timout    time.Duration
+	Stdout    []byte
+	Stderr    []byte
+	Truncated bool
 }
 
 func (e *TimeoutError) Error() string {
-	return fmt.Sprintf("tool %q timed out after %s", e.Tool, e.Timout)
+	d := e.Timeout
+	if d == 0 {
+		d = e.Timout
+	}
+	return fmt.Sprintf("tool %q timed out after %s", e.Tool, d)
 }
 
 // CanceledError indicates the caller's context was cancelled and the process
 // group was killed. It wraps the context's error, so errors.Is(err,
-// context.Canceled) (or DeadlineExceeded) still reports true.
+// context.Canceled) (or DeadlineExceeded) still reports true, and carries the
+// partial output captured before the kill.
 type CanceledError struct {
-	Tool string
-	Args []string
-	Err  error
+	Tool      string
+	Args      []string
+	Err       error
+	Stdout    []byte
+	Stderr    []byte
+	Truncated bool
 }
 
 func (e *CanceledError) Error() string {

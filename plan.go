@@ -175,10 +175,12 @@ func (p *Plan) Finish(out Output) (*Result, error) {
 	}
 	if !p.t.output.successExitCodes[out.ExitCode] {
 		return nil, &ExecError{
-			Tool:     p.Tool,
-			Args:     p.Argv,
-			ExitCode: out.ExitCode,
-			Stderr:   out.Stderr,
+			Tool:      p.Tool,
+			Args:      p.Argv,
+			ExitCode:  out.ExitCode,
+			Stdout:    out.Stdout,
+			Stderr:    out.Stderr,
+			Truncated: out.Truncated,
 		}
 	}
 	if err := p.t.decodeOutput(res); err != nil {

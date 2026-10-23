@@ -59,7 +59,11 @@ func TestCancelledContextStopsProcess(t *testing.T) {
 	pidFile := filepath.Join(t.TempDir(), "pid")
 	r := fixtureRegistry(t, map[string]fixtureDef{
 		"sleeper": {
-			env:     map[string]string{"GO_WANT_HELPER_PROCESS": "1", "FAKE_SLEEP": "60s"},
+			env: map[string]string{
+				"GO_WANT_HELPER_PROCESS": "1",
+				"FAKE_STDOUT":            "before-cancel\n",
+				"FAKE_SLEEP":             "60s",
+			},
 			timeout: "60s",
 		},
 	})
@@ -96,6 +100,9 @@ func TestCancelledContextStopsProcess(t *testing.T) {
 		}
 		if !IsCanceled(got.err) {
 			t.Fatal("IsCanceled = false for a cancelled call")
+		}
+		if string(ce.Stdout) != "before-cancel\n" {
+			t.Fatalf("CanceledError.Stdout = %q, want the partial output", ce.Stdout)
 		}
 		if elapsed := time.Since(start); elapsed > time.Second {
 			t.Fatalf("cancel took %s to stop the process, want < 1s", elapsed)

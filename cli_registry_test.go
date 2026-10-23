@@ -29,17 +29,23 @@ func TestHelperProcess(t *testing.T) {
 	if m := os.Getenv("FAKE_MARKER"); m != "" {
 		os.WriteFile(m, []byte("marker"), 0o644)
 	}
-	if p := os.Getenv("FAKE_RECORD_PID"); p != "" {
-		os.WriteFile(p, []byte(strconv.Itoa(os.Getpid())), 0o644)
-	}
-	if mode := os.Getenv("FAKE_DESCENDANT"); mode != "" {
-		spawnFixtureDescendant(mode)
-	}
 	if s := os.Getenv("FAKE_STDOUT"); s != "" {
 		fmt.Print(s)
 	}
 	if s := os.Getenv("FAKE_STDERR"); s != "" {
 		fmt.Fprint(os.Stderr, s)
+	}
+	if os.Getenv("FAKE_OUTPUT") == "big" {
+		// more than the 1 MiB capture limit
+		fmt.Print(strings.Repeat("x", maxCapture+512))
+	}
+	// Recorded after the output so a test that waits for the pid file also
+	// knows what the fixture has already written.
+	if p := os.Getenv("FAKE_RECORD_PID"); p != "" {
+		os.WriteFile(p, []byte(strconv.Itoa(os.Getpid())), 0o644)
+	}
+	if mode := os.Getenv("FAKE_DESCENDANT"); mode != "" {
+		spawnFixtureDescendant(mode)
 	}
 	if s := os.Getenv("FAKE_SLEEP"); s != "" {
 		d, _ := time.ParseDuration(s)
@@ -64,6 +70,8 @@ func TestHelperProcess(t *testing.T) {
 		json.NewEncoder(os.Stdout).Encode(probe)
 	case "env":
 		fmt.Println(os.Getenv("FAKE_ECHO_OUT"))
+	case "big":
+		// printed above, before FAKE_EXIT
 	case "quiet":
 		// print nothing; FAKE_STDOUT carries the output
 	default:
