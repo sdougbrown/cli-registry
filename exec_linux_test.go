@@ -13,18 +13,6 @@ import (
 	"time"
 )
 
-func waitForFile(t *testing.T, path string, d time.Duration) {
-	t.Helper()
-	deadline := time.Now().Add(d)
-	for time.Now().Before(deadline) {
-		if _, err := os.Stat(path); err == nil {
-			return
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
-	t.Fatalf("timed out waiting for %s", path)
-}
-
 // pidRunning reports whether pid is a live (non-zombie) process.
 func pidRunning(pid int) bool {
 	b, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
