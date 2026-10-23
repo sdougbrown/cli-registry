@@ -167,7 +167,7 @@ func TestBoundedDrainMarksTruncation(t *testing.T) {
 
 // Cancellation returns promptly even when an escaped descendant still holds
 // the capture pipes: the cancel drains on the 25 ms cancelDrainGrace, and the
-// test allows 500 ms so only a real stall fails.
+// test allows 200 ms so only a real stall fails.
 func TestCancelWithPipeEscaperIsPrompt(t *testing.T) {
 	r, tool, ready := escaperRegistry(t, "leader-sleep")
 	ctx, cancel := context.WithCancel(context.Background())
@@ -184,8 +184,8 @@ func TestCancelWithPipeEscaperIsPrompt(t *testing.T) {
 		if !IsCanceled(err) {
 			t.Fatalf("cancel error = %v", err)
 		}
-		if elapsed > 500*time.Millisecond {
-			t.Fatalf("cancel took %s with a setsid pipe holder, want < 500ms", elapsed)
+		if elapsed > 200*time.Millisecond {
+			t.Fatalf("cancel took %s with a setsid pipe holder, want < 200ms", elapsed)
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("cancel stuck")
