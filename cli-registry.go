@@ -135,27 +135,15 @@ func (r *Registry) Lookup(name string) (Tool, bool) {
 // Call validates args against tool's schema, builds argv, spawns the command,
 // and returns the decoded result. Args that fail validation return a
 // *ValidationError before any process is spawned.
+//
+// Call is Plan plus the library's own exec: a host that runs commands itself
+// uses Plan and Finish instead, and sees the same classification.
 func (r *Registry) Call(ctx context.Context, tool Tool, args map[string]any, opt ...Option) (*Result, error) {
-	t, ok := r.tools[tool.Name]
-	if !ok {
-		return nil, &LoadError{Err: fmt.Errorf("unknown tool %q", tool.Name)}
-	}
-	opts := defaultCallOptions()
-	for _, o := range opt {
-		o(&opts)
-	}
-
-	// validate before spawn
-	if issues := t.schema.Validate(args); len(issues) > 0 {
-		return nil, &ValidationError{Tool: t.name, Issues: issues}
-	}
-
-	argv, err := t.buildArgv(args, &opts)
+	p, err := r.Plan(tool, args, opt...)
 	if err != nil {
-		return nil, &DefinitionError{Tool: t.name, Err: err}
+		return nil, err
 	}
-
-	return t.exec(ctx, argv, &opts)
+	return p.run(ctx)
 }
 
 // Result is the decoded outcome of a tool call.

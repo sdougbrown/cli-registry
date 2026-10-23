@@ -1,17 +1,13 @@
 package cliregistry
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
-	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/sdougbrown/cli-registry/manifest"
@@ -81,13 +77,6 @@ type toolDef struct {
 		SuccessExitCodes []int  `json:"success_exit_codes"`
 	} `json:"output"`
 }
-
-// benignDefaultEnv is the minimal set of standard variables passed to a child
-// in addition to declared env, so real CLIs (and their subprocesses, via PATH,
-// HOME, LANG) can run without blanket-inheriting arbitrary host env.
-var benignDefaultEnv = []string{"PATH", "HOME", "LANG", "LC_ALL", "TMPDIR"}
-
-const maxCapture = 1 << 20 // 1 MiB per stream
 
 func (r *Registry) compileTool(doc *manifest.Document, name string) error {
 	raw := doc.Tools[name]
@@ -410,149 +399,22 @@ func encodeScalar(v any) string {
 
 func needsDashEscape(s string) bool { return strings.HasPrefix(s, "-") && s != "-" }
 
-// exec spawns argv under the tool's resolved command semantics.
-func (t *tool) exec(ctx context.Context, argv []string, opts *callOptions) (*Result, error) {
-	cmd := exec.Command(argv[0], argv[1:]...)
-
-	// env allow-list
-	env := map[string]string{}
-	for _, k := range benignDefaultEnv {
-		if v, ok := os.LookupEnv(k); ok {
-			env[k] = v
-		}
-	}
-	for k, v := range t.env {
-		if strings.HasPrefix(v, "env:") {
-			name := strings.TrimPrefix(v, "env:")
-			host, ok := os.LookupEnv(name)
-			if !ok {
-				return nil, fmt.Errorf("referenced env %q not present", name)
-			}
-			env[k] = host
-		} else {
-			env[k] = v
-		}
-	}
-	for k, v := range opts.env {
-		env[k] = v
-	}
-	for k, v := range env {
-		cmd.Env = append(cmd.Env, k+"="+v)
-	}
-
-	// cwd
+// resolveDir returns the working directory the manifest or WithCWD fixes, or
+// "" when the host decides (cwd.mode inherit, no manifest scope).
+func (t *tool) resolveDir(opts *callOptions) (string, error) {
 	if opts.cwd != "" {
 		if t.cwd == nil || t.cwd.mode != "allow" {
-			return nil, fmt.Errorf("cwd requested but tool has no allowed cwd roots")
+			return "", fmt.Errorf("cwd requested but tool has no allowed cwd roots")
 		}
 		if !containedInRoots(opts.cwd, t.cwd.roots) {
-			return nil, fmt.Errorf("requested cwd %q outside allowed roots", opts.cwd)
+			return "", fmt.Errorf("requested cwd %q outside allowed roots", opts.cwd)
 		}
-		cmd.Dir = opts.cwd
-	} else if t.cwd != nil && t.cwd.mode == "allow" && len(t.cwd.roots) > 0 {
-		cmd.Dir = t.cwd.roots[0]
+		return opts.cwd, nil
 	}
-
-	// stdin closed; bounded capture via io.Writer
-	cmd.Stdin = nil
-	outW := newBoundedWriter(maxCapture)
-	errW := newBoundedWriter(maxCapture)
-	cmd.Stdout = outW
-	cmd.Stderr = errW
-
-	// process group so we can kill descendants
-	setProcAttr(cmd)
-	start := time.Now()
-	if err := cmd.Start(); err != nil {
-		return nil, fmt.Errorf("start: %w", err)
+	if t.cwd != nil && t.cwd.mode == "allow" && len(t.cwd.roots) > 0 {
+		return t.cwd.roots[0], nil
 	}
-
-	timeout := t.timeout
-	if opts.timeout > 0 {
-		timeout = opts.timeout
-	}
-	var timedOut atomic.Bool
-	timer := time.AfterFunc(timeout, func() {
-		// mark timed-out first, then kill the whole process group (descendants)
-		timedOut.Store(true)
-		killProcessGroup(cmd)
-	})
-	waite := cmd.Wait()
-	timer.Stop()
-
-	// honor an already-cancelled caller context as a timeout as well
-	if ctx.Err() != nil {
-		timedOut.Store(true)
-		killProcessGroup(cmd)
-	}
-
-	if timedOut.Load() {
-		return nil, &TimeoutError{Tool: t.name, Args: argv, Timout: timeout}
-	}
-
-	exitCode := 0
-	if waite != nil {
-		var ee *exec.ExitError
-		if errors.As(waite, &ee) {
-			exitCode = ee.ExitCode()
-		} else {
-			return nil, fmt.Errorf("wait: %w", waite)
-		}
-	}
-
-	res := &Result{
-		Stdout:    outW.Bytes(),
-		Stderr:    errW.Bytes(),
-		Truncated: outW.Truncated() || errW.Truncated(),
-		ExitCode:  exitCode,
-		Duration:  time.Since(start),
-	}
-	if !t.output.successExitCodes[exitCode] {
-		return nil, &ExecError{Tool: t.name, Args: argv, ExitCode: exitCode, Stderr: res.Stderr}
-	}
-	if err := t.decodeOutput(res); err != nil {
-		return nil, fmt.Errorf("decode output: %w", err)
-	}
-	return res, nil
-}
-
-type boundedWriter struct {
-	mu        sync.Mutex
-	buf       []byte
-	limit     int
-	truncated bool
-}
-
-func newBoundedWriter(limit int) *boundedWriter { return &boundedWriter{limit: limit} }
-
-func (b *boundedWriter) Write(p []byte) (int, error) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	n := len(p)
-	if len(b.buf) < b.limit {
-		room := b.limit - len(b.buf)
-		if n > room {
-			b.buf = append(b.buf, p[:room]...)
-			b.truncated = true
-		} else {
-			b.buf = append(b.buf, p...)
-		}
-	} else {
-		b.truncated = true
-	}
-	return n, nil // report full write; we silently drop excess
-}
-
-func (b *boundedWriter) Bytes() []byte {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return append([]byte(nil), b.buf...)
-}
-
-func (b *boundedWriter) Truncated() bool {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return b.truncated
+	return "", nil
 }
 
 // evalPointer evaluates an RFC 6901 JSON Pointer against a decoded value.

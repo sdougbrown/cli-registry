@@ -22,6 +22,11 @@ type fixtureDef struct {
 
 func fixtureRegistry(t *testing.T, defs map[string]fixtureDef) *Registry {
 	t.Helper()
+	return fixtureRegistryIn(t, t.TempDir(), defs)
+}
+
+func fixtureRegistryIn(t *testing.T, dir string, defs map[string]fixtureDef) *Registry {
+	t.Helper()
 	tools := map[string]any{}
 	for name, d := range defs {
 		props := d.properties
@@ -60,7 +65,7 @@ func fixtureRegistry(t *testing.T, defs map[string]fixtureDef) *Registry {
 	if err != nil {
 		t.Fatal(err)
 	}
-	p := filepath.Join(t.TempDir(), "fixtures.json")
+	p := filepath.Join(dir, "fixtures.json")
 	if err := os.WriteFile(p, raw, 0o644); err != nil {
 		t.Fatal(err)
 	}

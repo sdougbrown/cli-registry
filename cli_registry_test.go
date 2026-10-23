@@ -64,6 +64,8 @@ func TestHelperProcess(t *testing.T) {
 		json.NewEncoder(os.Stdout).Encode(probe)
 	case "env":
 		fmt.Println(os.Getenv("FAKE_ECHO_OUT"))
+	case "quiet":
+		// print nothing; FAKE_STDOUT carries the output
 	default:
 		fmt.Println("hello")
 	}
