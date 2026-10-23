@@ -82,6 +82,20 @@ func (e *TimeoutError) Error() string {
 	return fmt.Sprintf("tool %q timed out after %s", e.Tool, e.Timout)
 }
 
+// CanceledError indicates the caller's context was cancelled and the process
+// group was killed. It wraps the context's error, so errors.Is(err,
+// context.Canceled) (or DeadlineExceeded) still reports true.
+type CanceledError struct {
+	Tool string
+	Args []string
+	Err  error
+}
+
+func (e *CanceledError) Error() string {
+	return fmt.Sprintf("tool %q cancelled: %v", e.Tool, e.Err)
+}
+func (e *CanceledError) Unwrap() error { return e.Err }
+
 // Registry is a compiled, immutable, thread-safe set of tools.
 type Registry struct {
 	tools map[string]*tool
@@ -180,5 +194,8 @@ func WithTimeout(d time.Duration) Option { return func(o *callOptions) { o.timeo
 // WithEnv adds or overrides declared environment variables for a single call.
 func WithEnv(k, v string) Option { return func(o *callOptions) { o.env[k] = v } }
 
-// IsTimeout reports whether err is a *TimeoutError (errors.Is-aware helper).
+// IsTimeout reports whether err is a *TimeoutError (errors.As-aware helper).
 func IsTimeout(err error) bool { var te *TimeoutError; return errors.As(err, &te) }
+
+// IsCanceled reports whether err is a *CanceledError (errors.As-aware helper).
+func IsCanceled(err error) bool { var ce *CanceledError; return errors.As(err, &ce) }
