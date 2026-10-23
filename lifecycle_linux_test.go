@@ -182,7 +182,7 @@ func TestCancelWithPipeEscaperIsPrompt(t *testing.T) {
 	defer cancel()
 	done := make(chan error, 1)
 	go func() { _, err := r.Call(ctx, tool, map[string]any{}); done <- err }()
-	waitForFile(t, ready, 5*time.Second)
+	_ = waitForPID(t, ready, 5*time.Second)
 	start := time.Now()
 	cancel()
 	select {
