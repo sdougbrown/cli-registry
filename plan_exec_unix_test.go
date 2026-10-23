@@ -88,3 +88,48 @@ func TestSymlinkedCWDOutsideAllowedRootIsRejected(t *testing.T) {
 		t.Fatalf("Plan.Dir = %q, want the resolved %q (%v)", p.Dir, want, err)
 	}
 }
+
+// A symlink that already points outside the allowed root is not made inside by
+// its target not existing yet: a directory that cannot be fully resolved is an
+// error at plan time, not a lexical suffix accepted for later creation.
+func TestDanglingSymlinkCWDOutsideRootIsRejected(t *testing.T) {
+	root, outside := t.TempDir(), t.TempDir()
+	target := filepath.Join(outside, "created-by-host")
+	link := filepath.Join(root, "escape")
+	if err := os.Symlink(target, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	r := fixtureRegistry(t, map[string]fixtureDef{"t": probeTool(nil, fixtureDef{cwd: map[string]any{"mode": "allow", "roots": []any{root}}})})
+	tool := mustTool(t, r, "t")
+	p, err := r.Plan(tool, map[string]any{}, WithCWD(link))
+	if err == nil {
+		t.Fatalf("Plan(WithCWD(%q)) = %q, nil; a symlink to a missing outside directory was accepted", link, p.Dir)
+	}
+	if _, err := r.Call(context.Background(), tool, map[string]any{}, WithCWD(link)); err == nil {
+		t.Fatal("Call accepted a symlink to a missing outside directory")
+	}
+	// Once the target exists the same link resolves outside the allowed root.
+	if err := os.Mkdir(target, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Plan(tool, map[string]any{}, WithCWD(link)); err == nil || !strings.Contains(err.Error(), "outside allowed roots") {
+		t.Fatalf("Plan after the target exists = %v, want a containment error", err)
+	}
+}
+
+// A symlink loop cannot be resolved, so it fails closed instead of being
+// reported as an absolute path that was never checked.
+func TestLoopingSymlinkCWDFailsClosed(t *testing.T) {
+	dir := t.TempDir()
+	a, b := filepath.Join(dir, "a"), filepath.Join(dir, "b")
+	if err := os.Symlink(a, b); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	if err := os.Symlink(b, a); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	r := fixtureRegistry(t, map[string]fixtureDef{"t": probeTool(nil, fixtureDef{cwd: map[string]any{"mode": "inherit"}})})
+	if p, err := r.Plan(mustTool(t, r, "t"), map[string]any{}, WithCWD(a)); err == nil {
+		t.Fatalf("Plan(WithCWD(%q)) = %q, nil; a symlink loop was accepted", a, p.Dir)
+	}
+}

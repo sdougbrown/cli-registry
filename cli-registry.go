@@ -206,7 +206,9 @@ func defaultCallOptions() callOptions {
 // requested path must fall within the tool's allowed roots, else the call
 // fails. A tool without an allow scope leaves the working directory to the
 // host, so a request for one is accepted as given. Either way Plan resolves it
-// to an absolute path with symlinks resolved and reports it as Plan.Dir.
+// to an absolute path with symlinks resolved and reports it as Plan.Dir; a
+// directory that cannot be fully resolved (missing, dangling symlink, loop or
+// unreadable) is an error at plan time.
 func WithCWD(dir string) Option { return func(o *callOptions) { o.cwd = dir } }
 
 // WithTimeout overrides the tool's default timeout for a single call.

@@ -406,7 +406,9 @@ func needsDashEscape(s string) bool { return strings.HasPrefix(s, "-") && s != "
 // A fixed directory is resolved here, once, against the planning process's
 // working directory: a host executor that runs the argv from its own session
 // base must land in the directory Plan validated, not in whatever its base
-// happens to make of the same relative string.
+// happens to make of the same relative string. The directory must exist and
+// resolve completely; a path whose symlinks cannot be followed is an error
+// rather than a lexical guess, and containment is checked on the result.
 func (t *tool) resolveDir(opts *callOptions) (string, error) {
 	if opts.cwd == "" {
 		if t.cwd != nil && t.cwd.mode == "allow" && len(t.cwd.roots) > 0 {
@@ -428,30 +430,18 @@ func (t *tool) resolveDir(opts *callOptions) (string, error) {
 	return resolved, nil
 }
 
-// resolvePath makes dir absolute and resolves symlinks, including in the part
-// of the path that does not exist yet, so containment is checked on the
-// directory the process would really start in rather than on its spelling.
+// resolvePath makes dir absolute and resolves every symlink in it, so the
+// containment check and the executor both see the directory the process would
+// really start in. Nothing is inferred from a partial resolution: a directory
+// that does not exist, a dangling symlink, an unreadable component or a
+// symlink loop is an error, because a path that cannot be fully resolved
+// cannot be proven to be inside an allowed root.
 func resolvePath(dir string) (string, error) {
 	abs, err := filepath.Abs(dir)
 	if err != nil {
 		return "", err
 	}
-	rest := ""
-	for {
-		resolved, err := filepath.EvalSymlinks(abs)
-		if err == nil {
-			if rest == "" {
-				return resolved, nil
-			}
-			return filepath.Join(resolved, rest), nil
-		}
-		parent := filepath.Dir(abs)
-		if parent == abs {
-			return "", err
-		}
-		rest = filepath.Join(filepath.Base(abs), rest)
-		abs = parent
-	}
+	return filepath.EvalSymlinks(abs)
 }
 
 // evalPointer evaluates an RFC 6901 JSON Pointer against a decoded value.

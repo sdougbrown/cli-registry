@@ -81,7 +81,10 @@
 // Plan.Dir is absolute with symlinks resolved whenever the manifest or WithCWD
 // fixes it, so an executor with its own session base runs in the directory the
 // plan validated; an empty Dir means the manifest left the choice to the host,
-// which then picks its session directory.
+// which then picks its session directory. A fixed directory that cannot be
+// fully resolved — it does not exist, is a dangling symlink, loops, or cannot
+// be read — is an error from Plan, never an unresolved path handed to an
+// executor.
 //
 // Finish applies the tool's success exit codes and output decoding to a
 // captured run, so a host-side run is classified exactly as Call classifies

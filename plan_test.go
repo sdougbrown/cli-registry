@@ -271,6 +271,22 @@ func TestPlanMatchesCallDirEnvAndTimeout(t *testing.T) {
 	})
 }
 
+// A fixed working directory must exist when the plan is built. A missing
+// WithCWD used to be accepted as an absolute lexical path and fail later at
+// spawn; nothing is built now.
+func TestMissingCWDFailsAtPlanTime(t *testing.T) {
+	r := fixtureRegistry(t, map[string]fixtureDef{"t": probeTool(nil, fixtureDef{})})
+	tool := mustTool(t, r, "t")
+	missing := filepath.Join(t.TempDir(), "not-created")
+	p, err := r.Plan(tool, map[string]any{}, WithCWD(missing))
+	if err == nil {
+		t.Fatalf("Plan(WithCWD(%q)) = %q, nil; a missing directory was accepted", missing, p.Dir)
+	}
+	if _, err := r.Call(context.Background(), tool, map[string]any{}, WithCWD(missing)); err == nil {
+		t.Fatal("Call accepted a missing directory")
+	}
+}
+
 func TestPlanResolvesEnvOnlyOnHostDemand(t *testing.T) {
 	t.Setenv("PLAN_HOST", "host-value")
 	r := fixtureRegistry(t, map[string]fixtureDef{

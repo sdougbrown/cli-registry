@@ -112,7 +112,9 @@ resolves against whatever environment the host passes to `ResolveEnv`, not the
 process environment. `BenignEnv` lists the variables `Call` copies by default.
 A fixed `Plan.Dir` is absolute with symlinks resolved, so an executor with its
 own session base runs in the directory `Plan` validated; an empty one means the
-manifest left the choice to the host.
+manifest left the choice to the host. A directory that cannot be fully
+resolved — missing, a dangling symlink, a loop, or unreadable — is an error
+from `Plan`, not an unchecked path handed to an executor.
 
 `Finish` classifies a completed run: it applies the tool's success exit codes
 and output decoding, and returns `*cliregistry.ExecError` for a run outside

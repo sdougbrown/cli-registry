@@ -341,6 +341,9 @@ func TestCWDRestricted(t *testing.T) {
 		t.Fatal(err)
 	}
 	outside := filepath.Join(dir, "..", "outside")
+	if err := os.Mkdir(outside, 0o700); err != nil {
+		t.Fatal(err)
+	}
 	_, err = r.Call(context.Background(), mustTool(t, r, "t"), map[string]any{}, WithCWD(outside))
 	if err == nil || !strings.Contains(err.Error(), "outside allowed roots") {
 		t.Fatalf("expected cwd containment error, got %v", err)

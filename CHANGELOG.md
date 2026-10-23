@@ -55,6 +55,12 @@ library's, and makes the library's own execution stop, reap and report.
   different session base runs in the directory that was validated. Containment
   is checked on the resolved directory. An empty `Plan.Dir` still means "the
   host decides".
+- A `WithCWD` directory that cannot be fully resolved — it does not exist, is
+  a dangling symlink, loops, or cannot be read — is now an error from `Plan`
+  (and therefore `Call`). A missing directory used to be accepted as a lexical
+  suffix and fail later at spawn; planning now requires it to exist and be
+  resolvable, so a symlink to a not-yet-created outside target is rejected
+  instead of being run through after the host creates the target.
 - `WithCWD` is accepted for a tool whose manifest leaves the working directory
   to the host (`cwd.mode: inherit`, or no `cwd` scope at all); it used to be
   rejected as though the request were an unauthorised allow-scope one.
