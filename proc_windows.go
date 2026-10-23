@@ -16,3 +16,13 @@ func killProcessGroup(cmd *exec.Cmd) {
 		_ = cmd.Process.Kill()
 	}
 }
+
+// canSignalAfterReap reports whether signalling after the leader was reaped is
+// still identity-safe. Windows kills through the process handle the runtime
+// holds (TerminateProcess), not through a reusable number, so it is.
+func canSignalAfterReap() bool { return true }
+
+// observeExitBeforeReap reports whether the leader's exit could be observed
+// without reaping it. Windows has no such observation here, so the leader is
+// reaped first; the post-exit kill stays safe because it uses the handle.
+func observeExitBeforeReap(*exec.Cmd) bool { return false }

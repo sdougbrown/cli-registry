@@ -15,10 +15,15 @@ UMPIRE_SPEC_SHA256  = 560184f267e4224f00dd5bed8a6a66bcafdb906153c80699c0f074ec30
 #   cat conformance/index.json conformance/fixtures/* conformance/failures/* | sha256sum
 FIXTURE_DIGEST      = 5071576e907e549a96c04ef9c53f1efa335b753a0258a42eecb12b490ad3bd02
 
-.PHONY: test vet build fmtcheck tidycheck fixtures-verify verify
+.PHONY: test test-testhooks vet build fmtcheck tidycheck fixtures-verify verify
 
 test:
 	$(GO) test ./...
+
+# The lifecycle regression tests observe the engine through test-only seams
+# (hooks_testhooks.go); the default build has no hooks and no cost.
+test-testhooks:
+	$(GO) test -tags testhooks ./...
 
 vet:
 	$(GO) vet ./...
@@ -40,4 +45,4 @@ fixtures-verify:
 	fi; \
 	echo "conformance fixtures ok ($${UMPIRE_SPEC_VERSION:-$(UMPIRE_SPEC_VERSION)})"
 
-verify: test vet build fmtcheck tidycheck fixtures-verify
+verify: test test-testhooks vet build fmtcheck tidycheck fixtures-verify

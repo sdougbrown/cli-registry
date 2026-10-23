@@ -29,3 +29,6 @@ jobs:
 
       - name: Test
         run: go test ./...
+
+      - name: Test (lifecycle hooks)
+        run: go test -tags testhooks ./...
