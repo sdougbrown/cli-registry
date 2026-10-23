@@ -3,10 +3,27 @@ package cliregistry
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 )
+
+// waitForRecordedOutput blocks until the fixture has written its output and
+// recorded its pid, so a cancel lands after the call is really running instead
+// of after a fixed sleep.
+func waitForRecordedOutput(t *testing.T, path string, d time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(d)
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(path); err == nil {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for %s", path)
+}
 
 // A v0.1.0 client that handles timeouts with `IsTimeout` keeps catching a
 // cancelled call and an expired deadline: context termination is reported as
@@ -54,13 +71,14 @@ func TestContextTerminationCarriesCauseAndOutput(t *testing.T) {
 			timeout: "60s",
 		},
 	})
+	pidFile := filepath.Join(t.TempDir(), "record.pid")
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() {
-		_, err := r.Call(ctx, mustTool(t, r, "slow"), map[string]any{})
+		_, err := r.Call(ctx, mustTool(t, r, "slow"), map[string]any{}, WithEnv("FAKE_RECORD_PID", pidFile))
 		done <- err
 	}()
-	time.Sleep(100 * time.Millisecond)
+	waitForRecordedOutput(t, pidFile, 5*time.Second)
 	cancel()
 	err := <-done
 	var te *TimeoutError

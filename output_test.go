@@ -62,6 +62,10 @@ func TestExecErrorReportsTruncation(t *testing.T) {
 }
 
 func TestTimeoutErrorCarriesPartialOutput(t *testing.T) {
+	// 1s, not 200ms: the helper must reach its writes before the timeout can
+	// classify the run, which it does within ~7.4ms measured, so 1s leaves
+	// ~135x headroom for a loaded runner. The leader sleeps 60s, so the
+	// timeout is still what stops it.
 	r := fixtureRegistry(t, map[string]fixtureDef{
 		"slow": {
 			env: map[string]string{
@@ -70,7 +74,7 @@ func TestTimeoutErrorCarriesPartialOutput(t *testing.T) {
 				"FAKE_STDERR":            "stderr-before\n",
 				"FAKE_SLEEP":             "60s",
 			},
-			timeout: "200ms",
+			timeout: "1s",
 		},
 	})
 	start := time.Now()
@@ -94,13 +98,13 @@ func TestTimeoutErrorCarriesPartialOutput(t *testing.T) {
 	if te.Truncated {
 		t.Fatal("TimeoutError.Truncated = true for short streams")
 	}
-	if te.Timeout != 200*time.Millisecond {
-		t.Fatalf("TimeoutError.Timeout = %s, want 200ms", te.Timeout)
+	if te.Timeout != time.Second {
+		t.Fatalf("TimeoutError.Timeout = %s, want 1s", te.Timeout)
 	}
 	if te.Timout != te.Timeout {
 		t.Fatalf("deprecated Timout = %s, Timeout = %s; both must be set", te.Timout, te.Timeout)
 	}
-	if !strings.Contains(te.Error(), "200ms") {
+	if !strings.Contains(te.Error(), "1s") {
 		t.Fatalf("TimeoutError.Error() = %q, want it to name the timeout", te.Error())
 	}
 }
