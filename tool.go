@@ -399,22 +399,58 @@ func encodeScalar(v any) string {
 
 func needsDashEscape(s string) bool { return strings.HasPrefix(s, "-") && s != "-" }
 
-// resolveDir returns the working directory the manifest or WithCWD fixes, or
-// "" when the host decides (cwd.mode inherit, no manifest scope).
+// resolveDir returns the absolute, symlink-resolved working directory the
+// manifest or WithCWD fixes, or "" when the host decides (cwd.mode inherit, no
+// manifest scope).
+//
+// A fixed directory is resolved here, once, against the planning process's
+// working directory: a host executor that runs the argv from its own session
+// base must land in the directory Plan validated, not in whatever its base
+// happens to make of the same relative string.
 func (t *tool) resolveDir(opts *callOptions) (string, error) {
 	if opts.cwd != "" {
 		if t.cwd == nil || t.cwd.mode != "allow" {
 			return "", fmt.Errorf("cwd requested but tool has no allowed cwd roots")
 		}
-		if !containedInRoots(opts.cwd, t.cwd.roots) {
+		resolved, err := resolvePath(opts.cwd)
+		if err != nil {
+			return "", fmt.Errorf("requested cwd %q: %w", opts.cwd, err)
+		}
+		if !containedInRoots(resolved, t.cwd.roots) {
 			return "", fmt.Errorf("requested cwd %q outside allowed roots", opts.cwd)
 		}
-		return opts.cwd, nil
+		return resolved, nil
 	}
 	if t.cwd != nil && t.cwd.mode == "allow" && len(t.cwd.roots) > 0 {
 		return t.cwd.roots[0], nil
 	}
 	return "", nil
+}
+
+// resolvePath makes dir absolute and resolves symlinks, including in the part
+// of the path that does not exist yet, so containment is checked on the
+// directory the process would really start in rather than on its spelling.
+func resolvePath(dir string) (string, error) {
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return "", err
+	}
+	rest := ""
+	for {
+		resolved, err := filepath.EvalSymlinks(abs)
+		if err == nil {
+			if rest == "" {
+				return resolved, nil
+			}
+			return filepath.Join(resolved, rest), nil
+		}
+		parent := filepath.Dir(abs)
+		if parent == abs {
+			return "", err
+		}
+		rest = filepath.Join(filepath.Base(abs), rest)
+		abs = parent
+	}
 }
 
 // evalPointer evaluates an RFC 6901 JSON Pointer against a decoded value.
@@ -477,13 +513,12 @@ func (t *tool) decodeOutput(res *Result) error {
 	return nil
 }
 
+// containedInRoots reports whether dir is one of roots or inside one of them.
+// Both sides are absolute with symlinks resolved (see resolvePath and the cwd
+// roots compiled at load), so the check compares identities, not spellings.
 func containedInRoots(dir string, roots []string) bool {
-	abs, err := filepath.Abs(dir)
-	if err != nil {
-		return false
-	}
 	for _, root := range roots {
-		if abs == root || strings.HasPrefix(abs, root+string(filepath.Separator)) {
+		if dir == root || strings.HasPrefix(dir, root+string(filepath.Separator)) {
 			return true
 		}
 	}

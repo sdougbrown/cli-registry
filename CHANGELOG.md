@@ -43,6 +43,12 @@ library's, and makes the library's own execution stop, reap and report.
   a timeout; the pipe drain is bounded instead. A drain cut at that bound, like
   a failed capture read, sets `Truncated`, so a short stream is never reported
   as complete output.
+- A fixed working directory (`WithCWD`, or the manifest's first allowed root)
+  is resolved to an absolute path with symlinks resolved when `Plan` validates
+  it, and `Plan.Dir` and `Call` both use that path, so a host executor with a
+  different session base runs in the directory that was validated. Containment
+  is checked on the resolved directory. An empty `Plan.Dir` still means
+  "the host decides".
 - A cancelled call drains the capture with a 25 ms bound instead of the 500 ms
   a normal exit or a timeout gets, so cancellation returns promptly even when a
   descendant that left the process group still holds the pipes.

@@ -228,8 +228,8 @@ func TestPlanMatchesCallDirEnvAndTimeout(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if p.Dir != sub {
-			t.Fatalf("Plan.Dir = %q, want %q", p.Dir, sub)
+		if p.Dir != canon(sub) {
+			t.Fatalf("Plan.Dir = %q, want the resolved %q", p.Dir, canon(sub))
 		}
 		res, err := r.Call(context.Background(), tool, map[string]any{}, WithCWD(sub))
 		if err != nil {
