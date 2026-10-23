@@ -108,6 +108,44 @@ func TestCancelledContextStopsProcess(t *testing.T) {
 	waitGone(t, pid, 2*time.Second)
 }
 
+// An externally killed leader is a failed run, not a success and not a timeout:
+// the exit is reported with the signal's -1 code and the captured output.
+func TestExternallyKilledLeaderIsAnExecError(t *testing.T) {
+	pidFile := filepath.Join(t.TempDir(), "pid")
+	r := fixtureRegistry(t, map[string]fixtureDef{
+		"slow": {
+			env: map[string]string{
+				"GO_WANT_HELPER_PROCESS": "1",
+				"FAKE_OUTPUT":            "quiet",
+				"FAKE_SLEEP":             "60s",
+			},
+			timeout: "60s",
+		},
+	})
+	tool := mustTool(t, r, "slow")
+	done := make(chan error, 1)
+	go func() {
+		_, err := r.Call(context.Background(), tool, map[string]any{}, WithEnv("FAKE_RECORD_PID", pidFile))
+		done <- err
+	}()
+	waitForFile(t, pidFile, 5*time.Second)
+	pid := readPID(t, pidFile)
+	t.Cleanup(func() {
+		if pidRunning(pid) {
+			killPID(pid)
+		}
+	})
+	killPID(pid)
+	err := <-done
+	var ee *ExecError
+	if !errors.As(err, &ee) {
+		t.Fatalf("err = %T (%v), want *ExecError for a killed leader", err, err)
+	}
+	if ee.ExitCode != -1 {
+		t.Fatalf("ExitCode = %d, want -1 for a signalled exit", ee.ExitCode)
+	}
+}
+
 func TestCancelledContextBeforeStartDoesNotSpawn(t *testing.T) {
 	marker := filepath.Join(t.TempDir(), "ran.marker")
 	r := fixtureRegistry(t, map[string]fixtureDef{
