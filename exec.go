@@ -1,10 +1,9 @@
-// Package cliregistry turns pre-registered CLI commands into typed tool calls.
-//
+package cliregistry
+
 // This file is the library's own process engine: Plan.run executes argv with
 // exec.Command (no shell), a resolved environment, a bounded capture of both
 // streams, prompt cancellation, and a process-group kill on cancellation,
 // timeout and after every exit.
-package cliregistry
 
 import (
 	"context"

@@ -1,9 +1,8 @@
-// Package cliregistry turns pre-registered CLI commands into typed tool calls.
-//
-// The public contract (types, invariants, thread-safety) is documented in
-// doc.go and specs/*.md. This file implements the registry surface: loading,
-// enumeration, calling, options, and typed errors.
 package cliregistry
+
+// This file implements the registry surface: loading, enumeration, calling,
+// options, and typed errors. The public contract (types, invariants,
+// thread-safety) is documented in doc.go and specs/*.md.
 
 import (
 	"context"

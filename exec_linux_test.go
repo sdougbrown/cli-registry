@@ -82,7 +82,11 @@ func TestCancelledContextStopsProcess(t *testing.T) {
 	}()
 	waitForFile(t, pidFile, 15*time.Second)
 	pid := readPID(t, pidFile)
-	t.Cleanup(func() { killPID(pid) })
+	t.Cleanup(func() {
+		if pidRunning(pid) {
+			killPID(pid)
+		}
+	})
 
 	start := time.Now()
 	cancel()
@@ -161,7 +165,11 @@ func TestSameGroupDescendantsAreReaped(t *testing.T) {
 		t.Fatalf("exit code %d", exitCode)
 	}
 	pid := readPID(t, childPID)
-	t.Cleanup(func() { killPID(pid) })
+	t.Cleanup(func() {
+		if pidRunning(pid) {
+			killPID(pid)
+		}
+	})
 	waitGone(t, pid, 3*time.Second)
 }
 
@@ -192,6 +200,10 @@ func TestPipeHoldingDescendantIsNotATimeout(t *testing.T) {
 		t.Fatalf("stdout = %q, want %q", res.Stdout, "done\n")
 	}
 	pid := readPID(t, childPID)
-	t.Cleanup(func() { killPID(pid) })
+	t.Cleanup(func() {
+		if pidRunning(pid) {
+			killPID(pid)
+		}
+	})
 	waitGone(t, pid, 3*time.Second)
 }

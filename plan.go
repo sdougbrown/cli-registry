@@ -1,10 +1,9 @@
-// Package cliregistry turns pre-registered CLI commands into typed tool calls.
-//
-// Plan (this file) separates "what command would run" from "run it": a host
-// that owns an executor — a sandbox, a scrubbed environment, a session working
-// directory, its own cancellation and process reaping — builds a Plan, runs the
-// argv itself, and hands the captured output back to Finish.
 package cliregistry
+
+// This file separates "what command would run" from "run it": a host that owns
+// an executor — a sandbox, a scrubbed environment, a session working directory,
+// its own cancellation and process reaping — builds a Plan, runs the argv
+// itself, and hands the captured output back to Finish.
 
 import (
 	"fmt"

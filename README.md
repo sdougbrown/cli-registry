@@ -78,6 +78,44 @@ for the normative contract.
 }
 ```
 
+## Running it yourself
+
+`Call` validates, builds the argv and spawns the command in one step. A host
+that already owns an executor — a sandbox, a scrubbed environment, the
+session's working directory, its own cancellation and process reaping — splits
+that into `Plan`, its own run, and `Finish`:
+
+```go
+p, err := reg.Plan(tool, args, cliregistry.WithCWD(sessionDir))
+if err != nil {
+    return err // *cliregistry.ValidationError: nothing was built
+}
+env, err := p.ResolveEnv(scrubbedLookup) // resolve `env:NAME` against the host's own view
+if err != nil {
+    return err
+}
+out := executor.Run(ctx, p.Argv, env, p.Dir, p.Timeout) // your argv, env, cwd, lifetime
+res, err := p.Finish(out)                              // classifies exactly like Call
+```
+
+`Plan` touches no process and reads no environment, so an `env:NAME` reference
+resolves against whatever environment the host passes to `ResolveEnv`, not the
+process environment. `BenignEnv` lists the variables `Call` copies by default.
+`Finish` applies the tool's success exit codes and output decoding, and
+returns `*cliregistry.ExecError` for a run outside them.
+
+`Call` runs that same plan with the library's own engine:
+
+- a cancelled context kills the process group within milliseconds and returns
+  `*cliregistry.CanceledError` (wrapping `ctx.Err()`; test with `IsCanceled`);
+- a timeout kills the group and returns `*cliregistry.TimeoutError`
+  (`IsTimeout`);
+- every exit kills the rest of the process group, so descendants do not
+  outlive the call, and a descendant holding the capture pipes cannot turn a
+  normal exit into a timeout;
+- failures keep their output: `ExecError` carries `Stdout`, `Stderr` and
+  `Truncated`, and `TimeoutError`/`CanceledError` carry the partial streams.
+
 ## Layout
 
 | Path | Purpose |
@@ -101,8 +139,9 @@ checks the vendored fixtures' integrity; `make verify` runs the whole gate.
 - **Explicit registry** — only pre-registered surfaces are exposed; never
   auto-mirror a CLI.
 - **No shell** — argv passes to `exec.Command` directly (no injection).
-- **Env allow-list** — only declared variables (plus a benign default set);
-  `env:NAME` passthrough must be declared.
+- **Env allow-list** — only declared variables (plus `BenignEnv`); an
+  `env:NAME` passthrough must be declared, and a host that plans the call
+  resolves the reference against its own (scrubbed) environment.
 - **cwd containment** — optional `allow` roots, canonicalized.
 - **Timeout + process-group kill** — descendants are reaped.
 - **HTTP daemon** — loopback bind by default, bearer auth, Host/Origin checks,
