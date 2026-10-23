@@ -27,8 +27,39 @@ jobs:
       - name: Vet
         run: go vet ./...
 
+      # go vet on the host only compiles the `unix` build-tagged set, so the
+      # Windows and other-arch files are otherwise never type-checked. vet
+      # includes test files, which go build does not.
+      - name: Vet (cross-platform)
+        run: |
+          for target in windows/amd64 darwin/arm64 darwin/amd64 linux/arm64; do
+            echo "::group::GOOS=${target%/*} GOARCH=${target#*/}"
+            GOOS="${target%/*}" GOARCH="${target#*/}" go vet ./...
+            echo "::endgroup::"
+          done
+
+      # `go build`, not `make build`: the Makefile defaults GO to `mise exec --
+      # go`, which a GitHub runner does not have. Linking the cmds is what this
+      # adds over vet, which only type-checks.
+      - name: Build
+        run: go build ./...
+
+      # Pins the vendored umpire-spec conformance fixtures by digest, so a
+      # silent edit to them fails here instead of in a consumer.
+      - name: Conformance fixtures
+        run: make fixtures-verify
+
       - name: Test
         run: go test ./...
 
       - name: Test (lifecycle hooks)
         run: go test -tags testhooks ./...
+
+      # The lifecycle engine is concurrency code: atomics, a lifecycle lock,
+      # process-group signalling and reaping. Without the race detector a data
+      # race in the teardown path would ship green.
+      - name: Test (race)
+        run: go test -race ./...
+
+      - name: Test (race, lifecycle hooks)
+        run: go test -race -tags testhooks ./...

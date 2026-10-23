@@ -68,8 +68,7 @@ func TestCancelledContextStopsProcess(t *testing.T) {
 		res, err := r.Call(ctx, tool, map[string]any{}, WithEnv("FAKE_RECORD_PID", pidFile))
 		done <- call{res, err}
 	}()
-	waitForFile(t, pidFile, 15*time.Second)
-	pid := readPID(t, pidFile)
+	pid := waitForPID(t, pidFile, 15*time.Second)
 	t.Cleanup(func() {
 		if pidRunning(pid) {
 			killPID(pid)
@@ -128,8 +127,7 @@ func TestExternallyKilledLeaderIsAnExecError(t *testing.T) {
 		_, err := r.Call(context.Background(), tool, map[string]any{}, WithEnv("FAKE_RECORD_PID", pidFile))
 		done <- err
 	}()
-	waitForFile(t, pidFile, 5*time.Second)
-	pid := readPID(t, pidFile)
+	pid := waitForPID(t, pidFile, 5*time.Second)
 	t.Cleanup(func() {
 		if pidRunning(pid) {
 			killPID(pid)
@@ -193,7 +191,7 @@ func TestSameGroupDescendantsAreReaped(t *testing.T) {
 	if exitCode := res.ExitCode; exitCode != 0 {
 		t.Fatalf("exit code %d", exitCode)
 	}
-	pid := readPID(t, childPID)
+	pid := waitForPID(t, childPID, 5*time.Second)
 	t.Cleanup(func() {
 		if pidRunning(pid) {
 			killPID(pid)
@@ -228,7 +226,7 @@ func TestPipeHoldingDescendantIsNotATimeout(t *testing.T) {
 	if string(res.Stdout) != "done\n" {
 		t.Fatalf("stdout = %q, want %q", res.Stdout, "done\n")
 	}
-	pid := readPID(t, childPID)
+	pid := waitForPID(t, childPID, 5*time.Second)
 	t.Cleanup(func() {
 		if pidRunning(pid) {
 			killPID(pid)

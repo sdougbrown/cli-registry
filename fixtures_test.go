@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"strconv"
 	"testing"
 )
 
@@ -104,19 +103,6 @@ func decodeProbe(t *testing.T, res *Result) probe {
 // fixturePrefix is the argv prefix every fixture tool shares.
 func fixturePrefix() []string {
 	return []string{"-test.run=TestHelperProcess", "--"}
-}
-
-func readPID(t *testing.T, path string) int {
-	t.Helper()
-	b, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read pid file: %v", err)
-	}
-	pid, err := strconv.Atoi(string(b))
-	if err != nil {
-		t.Fatalf("parse pid %q: %v", b, err)
-	}
-	return pid
 }
 
 func killPID(pid int) {
