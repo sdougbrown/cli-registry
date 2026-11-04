@@ -140,6 +140,9 @@ func validateAvailabilityRule(raw json.RawMessage, conditions map[string]string)
 		if err := json.Unmarshal(raw, &inner); err != nil {
 			return fmt.Errorf("decode anyOf rules: %w", err)
 		}
+		if err := validateCompositeTargets("anyOf", inner.Rules, conditions); err != nil {
+			return err
+		}
 		for i, innerRule := range inner.Rules {
 			if err := validateAvailabilityRule(innerRule, conditions); err != nil {
 				return fmt.Errorf("anyOf rule %d: %w", i, err)
@@ -152,12 +155,48 @@ func validateAvailabilityRule(raw json.RawMessage, conditions map[string]string)
 		if err := json.Unmarshal(raw, &inner); err != nil {
 			return fmt.Errorf("decode eitherOf branches: %w", err)
 		}
+		var flat []json.RawMessage
+		for branchName, branchRules := range inner.Branches {
+			flat = append(flat, branchRules...)
+			_ = branchName
+		}
+		if err := validateCompositeTargets("eitherOf", flat, conditions); err != nil {
+			return err
+		}
 		for branchName, branchRules := range inner.Branches {
 			for i, innerRule := range branchRules {
 				if err := validateAvailabilityRule(innerRule, conditions); err != nil {
 					return fmt.Errorf("eitherOf branch %q rule %d: %w", branchName, i, err)
 				}
 			}
+		}
+	}
+	return nil
+}
+
+// validateCompositeTargets enforces the composite contract that all operand
+// rules gate the same tool: distinct explicit fields fail. The Umpire runtime
+// panics on this violation during hydration, so it is caught before the
+// schema ever reaches it.
+func validateCompositeTargets(kind string, rules []json.RawMessage, conditions map[string]string) error {
+	explicit := ""
+	for _, rawRule := range rules {
+		var rule struct {
+			Field string `json:"field"`
+		}
+		if err := json.Unmarshal(rawRule, &rule); err != nil {
+			continue
+		}
+		if rule.Field == "" {
+			continue
+		}
+		if explicit == "" {
+			explicit = rule.Field
+		} else if explicit != rule.Field {
+			return fmt.Errorf(
+				"%s rules must target the same fields; operands name %q and %q",
+				kind, explicit, rule.Field,
+			)
 		}
 	}
 	return nil

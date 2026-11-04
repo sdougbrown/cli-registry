@@ -435,3 +435,26 @@ func TestAvailabilityDuplicateAcrossFiles(t *testing.T) {
 		t.Errorf("error %q does not include %q", err.Error(), manifest.ErrDuplicateAvailability.Error())
 	}
 }
+
+func TestAvailabilityCompositeFieldMismatchFailsLoad(t *testing.T) {
+	// The Umpire runtime panics when composite operands gate different
+	// tools; the load pre-validation must reject the manifest first.
+	tool := `"t": {"description": "d", "command": ["echo"], "timeout": "1s",
+		"inputSchema": {"type": "object", "properties": {}, "additionalProperties": false},
+		"bindings": [], "output": {"mode": "raw"}}`
+	manifest := `{"version": 1, "tools": {` + tool + `},
+		"availability": {
+			"conditions": {"a": {"type": "boolean"}},
+			"rules": [{"type": "eitherOf", "group": "g", "branches": {
+				"x": [{"type": "enabledWhen", "field": "t", "when": {"op": "cond", "condition": "a"}}],
+				"y": [{"type": "requires", "field": "echo", "when": {"op": "cond", "condition": "a"}}]
+			}}]
+		}}`
+	_, err := Load(writeManifest(t, manifest))
+	if err == nil {
+		t.Fatal("expected load failure for composite operands targeting different tools")
+	}
+	if !strings.Contains(err.Error(), "must target the same fields") {
+		t.Errorf("error %q does not include the same-fields constraint", err.Error())
+	}
+}
