@@ -147,7 +147,7 @@ func Load(paths ...string) (*Registry, error) {
 	if doc.Availability != nil {
 		avail, err := compileAvailability(doc.Availability, r.order)
 		if err != nil {
-			return nil, &DefinitionError{Tool: "availability", Err: err}
+			return nil, &LoadError{Err: fmt.Errorf("availability block: %w", err)}
 		}
 		r.availability = avail
 	}

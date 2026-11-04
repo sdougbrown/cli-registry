@@ -216,6 +216,46 @@ func TestAvailabilityLoadFailures(t *testing.T) {
 				}}`,
 			wantErr: "supported type",
 		},
+		{
+			name: "disables with a tool source",
+			manifest: `{"version": 1, "tools": {` + validTool + `},
+				"availability": {
+					"conditions": {"a": {"type": "boolean"}},
+					"rules": [{"type": "disables", "targets": ["gh-pr"], "source": "gh-pr"}]
+				}}`,
+			wantErr: `"disables" must use "when" with a condition expression`,
+		},
+		{
+			name: "requires with plural dependencies",
+			manifest: `{"version": 1, "tools": {` + validTool + `},
+				"availability": {
+					"conditions": {"a": {"type": "boolean"}},
+					"rules": [{"type": "requires", "field": "gh-pr", "dependencies": ["gh-pr"]}]
+				}}`,
+			wantErr: `"requires" must use "when" with a condition expression`,
+		},
+		{
+			name: "anyOf wrapping a field-bound expression",
+			manifest: `{"version": 1, "tools": {` + validTool + `},
+				"availability": {
+					"conditions": {"a": {"type": "boolean"}},
+					"rules": [{"type": "anyOf", "rules": [
+						{"type": "enabledWhen", "field": "gh-pr",
+						 "when": {"op": "eq", "field": "gh-pr", "value": 1}}
+					]}]
+				}}`,
+			wantErr: "not a condition expression",
+		},
+		{
+			name: "not wrapping an undeclared condition",
+			manifest: `{"version": 1, "tools": {` + validTool + `},
+				"availability": {
+					"conditions": {"a": {"type": "boolean"}},
+					"rules": [{"type": "enabledWhen", "field": "gh-pr",
+						"when": {"op": "not", "expr": {"op": "condEq", "condition": "undeclared", "value": true}}}]
+				}}`,
+			wantErr: `undeclared condition "undeclared"`,
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -288,8 +328,7 @@ func TestAvailabilityCompositeRules(t *testing.T) {
 }
 
 func TestAvailabilityYAMLAndTOML(t *testing.T) {
-	yamlBody := `version: 1
-tools:
+	toolBlock := `tools:
   t:
     description: d
     command: [echo]
@@ -313,6 +352,7 @@ availability:
         condition: on
       reason: not on
 `
+	yamlBody := "version: 1\n" + toolBlock
 	dir := t.TempDir()
 	path := filepath.Join(dir, "r.yaml")
 	if err := os.WriteFile(path, []byte(yamlBody), 0o644); err != nil {
@@ -328,6 +368,50 @@ availability:
 	}
 	if availability["t"].Available || availability["t"].Reason != "not on" {
 		t.Errorf("yaml availability = %+v", availability["t"])
+	}
+
+	tomlBody := `version = 1
+
+[tools.t]
+description = "d"
+command = ["echo"]
+timeout = "1s"
+bindings = []
+
+[tools.t.inputSchema]
+type = "object"
+properties = {}
+additionalProperties = false
+
+[tools.t.output]
+mode = "raw"
+
+[availability.conditions.on]
+type = "boolean"
+
+[[availability.rules]]
+type = "enabledWhen"
+field = "t"
+reason = "not on"
+
+[availability.rules.when]
+op = "cond"
+condition = "on"
+`
+	path = filepath.Join(dir, "r.toml")
+	if err := os.WriteFile(path, []byte(tomlBody), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	reg, err = Load(path)
+	if err != nil {
+		t.Fatalf("load toml: %v", err)
+	}
+	availability, err = reg.Availability(map[string]any{"on": false})
+	if err != nil {
+		t.Fatalf("availability toml: %v", err)
+	}
+	if availability["t"].Available || availability["t"].Reason != "not on" {
+		t.Errorf("toml availability = %+v", availability["t"])
 	}
 }
 

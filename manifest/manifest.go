@@ -198,7 +198,6 @@ func Load(paths ...string) (*Document, error) {
 			merged.Availability = doc.Availability
 			sawAvailabilityFrom = f
 		}
-		merged.Version = sawVersion
 		for name, body := range doc.Tools {
 			if _, dup := merged.Tools[name]; dup {
 				return nil, fmt.Errorf("tool %q defined in both %s and %s: %w", name, merged.ToolSource[name], f, ErrDuplicateTool)

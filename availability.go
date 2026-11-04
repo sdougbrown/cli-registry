@@ -30,14 +30,6 @@ type availability struct {
 	conditions map[string]string
 }
 
-// conditionOnlyOps are the expression ops an availability rule may use: the
-// ones over declared conditions. Field-bound ops (eq, in, check, ...) would
-// read tool values, which availability evaluation never supplies, so they
-// are rejected at load rather than silently dead.
-var conditionOnlyOps = map[string]bool{
-	"cond": true, "condEq": true, "condIn": true, "and": true, "or": true, "not": true,
-}
-
 // availabilityRuleTypes are the rule shapes availability accepts. Every form
 // that references another tool's field (requires dependency/dependencies,
 // oneOf, disables source, fairWhen, check) is rejected at load.
@@ -127,6 +119,13 @@ func validateAvailabilityRule(raw json.RawMessage, conditions map[string]string)
 		if _, hasDependencies := rule["dependencies"]; hasDependencies {
 			return fmt.Errorf(
 				`"requires" must use "when" with a condition expression; availability rules do not read tool fields`,
+			)
+		}
+	}
+	if ruleType == "disables" {
+		if _, hasSource := rule["source"]; hasSource {
+			return fmt.Errorf(
+				`"disables" must use "when" with a condition expression; availability rules do not read tool fields`,
 			)
 		}
 	}
@@ -246,10 +245,7 @@ func (r *Registry) Availability(inputs map[string]any) (map[string]ToolAvailabil
 		return nil, err
 	}
 	for _, name := range r.order {
-		status, gated := fieldStatus[name]
-		if !gated {
-			continue
-		}
+		status := fieldStatus[name]
 		reasons := status.Reasons
 		if reasons == nil {
 			reasons = []string{}
