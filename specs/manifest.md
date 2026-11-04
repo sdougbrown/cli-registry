@@ -55,6 +55,49 @@ file, a directory (all manifests within, deterministic sort), or repeated paths.
 Duplicate tool names → load error. Load is **all-or-nothing**: any failure rejects
 the whole registry.
 
+## Availability
+
+Optional top-level `availability` object. At most one across the merged
+registry; a repeat is a load error.
+
+The block decides, at load time, which entries a consumer offers. It is a
+strict subset of the [Umpire](https://github.com/umpire-tools/umpire-spec) v1
+JSON contract, evaluated by the runtime with inputs the consumer supplies:
+
+- `conditions` (object, optional): the inputs the consumer supplies at load,
+  each `{ "type": "boolean"|"string"|"number"|"string[]"|"number[]",
+  "description"?: string }`.
+- `rules` (array, optional): Umpire rules that gate each tool's availability.
+  The tool set is implicit — every tool is a Umpire field; an ungated tool is
+  always available.
+
+Allowed rule forms, evaluated in declaration order (first failure supplies
+the tool's `reason`):
+
+- `enabledWhen`, `requires`, `disables` — each with a condition expression in
+  `when`; `requires` and `disables` must use the `when` form, not the
+  field-dependency form.
+- `anyOf` (`rules`) and `eitherOf` (`branches`) over the above.
+
+Allowed expression ops: `cond`, `condEq`, `condIn`, `and`, `or`, `not` —
+condition references only. Field-bound ops (`eq`, `in`, `check`, ...) are
+rejected at load: availability is evaluated without per-tool values, so a
+field-bound rule could never pass.
+
+Schema-level validation (unknown members, unknown conditions, bad types,
+empty composites) reuses the Umpire contract and fails the whole load.
+
+Consumer surface:
+
+- `Registry.AvailabilityInputs() map[string]string` — declared condition
+  inputs (name → type), for validating supplied inputs.
+- `Registry.Availability(inputs map[string]any) (map[string]ToolAvailability,
+  error)` — evaluated availability per tool (`Available`, `Reason`,
+  `Reasons`). A missing input fails with the Umpire error.
+
+Deciding what to do with an unavailable entry (drop it, or list it with its
+reason) is the consumer's call; the runtime returns both paths.
+
 ## Env semantics
 
 - Default: the child inherits **only** declared `env` variables (no blanket

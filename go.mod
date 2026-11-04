@@ -8,6 +8,8 @@ require (
 	gopkg.in/yaml.v3 v3.0.1
 )
 
+require github.com/umpire-tools/umpire-go v0.1.0
+
 require (
 	github.com/google/jsonschema-go v0.4.3 // indirect
 	github.com/modelcontextprotocol/go-sdk v1.6.0

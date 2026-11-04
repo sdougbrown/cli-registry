@@ -121,6 +121,9 @@ func (e *TimeoutError) Unwrap() error { return e.Cause }
 type Registry struct {
 	tools map[string]*tool
 	order []string // deterministic tool name order
+	// availability is the compiled registry-level availability block, or nil
+	// when the manifest declares none.
+	availability *availability
 }
 
 // Load reads every manifest reachable from paths and compiles the registry.
@@ -141,6 +144,13 @@ func Load(paths ...string) (*Registry, error) {
 		r.order = append(r.order, name)
 	}
 	sort.Strings(r.order)
+	if doc.Availability != nil {
+		avail, err := compileAvailability(doc.Availability, r.order)
+		if err != nil {
+			return nil, &DefinitionError{Tool: "availability", Err: err}
+		}
+		r.availability = avail
+	}
 	return r, nil
 }
 

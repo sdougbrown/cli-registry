@@ -33,8 +33,9 @@ const SupportedManifestVersion = 1
 
 // Errors surfaced by the loader. Callers may wrap them for path context.
 var (
-	ErrUnsupportedVersion = errors.New("unsupported manifest version")
-	ErrDuplicateTool      = errors.New("duplicate tool name")
+	ErrUnsupportedVersion    = errors.New("unsupported manifest version")
+	ErrDuplicateTool         = errors.New("duplicate tool name")
+	ErrDuplicateAvailability = errors.New("duplicate availability declaration")
 )
 
 // Format identifies the encoding of a manifest file.
@@ -82,13 +83,18 @@ type Document struct {
 	// ToolSource records the file path each tool came from, for dedup errors
 	// and later error context.
 	ToolSource map[string]string
+	// Availability is the raw (null-normalized) registry-level availability
+	// block, or nil when the manifest declares none. Compiled against the
+	// tool set at registry build time.
+	Availability json.RawMessage
 }
 
 // envelope is the typed top-level manifest shape used for unknown-field
 // rejection at the document level.
 type envelope struct {
-	Version int                        `json:"version"`
-	Tools   map[string]json.RawMessage `json:"tools"`
+	Version      int                        `json:"version"`
+	Tools        map[string]json.RawMessage `json:"tools"`
+	Availability json.RawMessage            `json:"availability"`
 }
 
 // Parse reads and validates a single manifest file into a Document.
@@ -145,10 +151,11 @@ func parse(path string, data []byte) (*Document, error) {
 		env.Tools = map[string]json.RawMessage{}
 	}
 	doc := &Document{
-		Path:       path,
-		Version:    env.Version,
-		Tools:      env.Tools,
-		ToolSource: map[string]string{},
+		Path:         path,
+		Version:      env.Version,
+		Tools:        env.Tools,
+		ToolSource:   map[string]string{},
+		Availability: env.Availability,
 	}
 	for name := range env.Tools {
 		doc.ToolSource[name] = path
@@ -172,6 +179,7 @@ func Load(paths ...string) (*Document, error) {
 		ToolSource: map[string]string{},
 	}
 	var sawVersion int
+	var sawAvailabilityFrom string
 	for _, f := range files {
 		doc, err := Parse(f)
 		if err != nil {
@@ -181,6 +189,14 @@ func Load(paths ...string) (*Document, error) {
 			sawVersion = doc.Version
 		} else if doc.Version != sawVersion {
 			return nil, fmt.Errorf("manifest %s: version %d conflicts with %d: %w", f, doc.Version, sawVersion, ErrUnsupportedVersion)
+		}
+		merged.Version = sawVersion
+		if doc.Availability != nil {
+			if merged.Availability != nil {
+				return nil, fmt.Errorf("manifest %s: availability already declared in %s: %w", f, sawAvailabilityFrom, ErrDuplicateAvailability)
+			}
+			merged.Availability = doc.Availability
+			sawAvailabilityFrom = f
 		}
 		merged.Version = sawVersion
 		for name, body := range doc.Tools {
