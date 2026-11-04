@@ -30,7 +30,7 @@ const availabilityFixture = `{
 		},
 		"avenor-reply": {
 			"description": "Reply through messaging",
-			"command": ["avenor", "reply"],
+			"command": ["echo"],
 			"timeout": "30s",
 			"inputSchema": {"type": "object", "properties": {}, "additionalProperties": false},
 			"bindings": [],
