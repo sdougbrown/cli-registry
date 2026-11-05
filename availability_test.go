@@ -69,52 +69,55 @@ func TestAvailabilityGatesTools(t *testing.T) {
 		t.Fatalf("load: %v", err)
 	}
 
-	// Everything on: all tools available.
-	availability, err := reg.Availability(map[string]any{
-		"profile_side_effecting": true, "messaging_enabled": true,
-	})
-	if err != nil {
-		t.Fatalf("availability: %v", err)
-	}
-	for _, name := range []string{"gh-pr-view", "gh-pr-edit", "avenor-reply"} {
-		if !availability[name].Available {
-			t.Errorf("%s should be available: %+v", name, availability[name])
+	t.Run("everything on: all tools available", func(t *testing.T) {
+		availability, err := reg.Availability(map[string]any{
+			"profile_side_effecting": true, "messaging_enabled": true,
+		})
+		if err != nil {
+			t.Fatalf("availability: %v", err)
 		}
-	}
-
-	// Read-only profile: the edit tool drops out with its reason.
-	availability, err = reg.Availability(map[string]any{
-		"profile_side_effecting": false, "messaging_enabled": true,
+		for _, name := range []string{"gh-pr-view", "gh-pr-edit", "avenor-reply"} {
+			if !availability[name].Available {
+				t.Errorf("%s should be available: %+v", name, availability[name])
+			}
+		}
 	})
-	if err != nil {
-		t.Fatalf("availability: %v", err)
-	}
-	if availability["gh-pr-edit"].Available {
-		t.Errorf("gh-pr-edit should be unavailable on a read-only profile")
-	}
-	if availability["gh-pr-edit"].Reason != "the profile is read-only" {
-		t.Errorf("reason = %q", availability["gh-pr-edit"].Reason)
-	}
-	if !availability["gh-pr-view"].Available {
-		t.Errorf("gh-pr-view should stay available: %+v", availability["gh-pr-view"])
-	}
-	if !availability["avenor-reply"].Available {
-		t.Errorf("avenor-reply should stay available: %+v", availability["avenor-reply"])
-	}
 
-	// Messaging off: the reply tool drops out.
-	availability, err = reg.Availability(map[string]any{
-		"profile_side_effecting": true, "messaging_enabled": false,
+	t.Run("read-only profile: edit drops out with its reason", func(t *testing.T) {
+		availability, err := reg.Availability(map[string]any{
+			"profile_side_effecting": false, "messaging_enabled": true,
+		})
+		if err != nil {
+			t.Fatalf("availability: %v", err)
+		}
+		if availability["gh-pr-edit"].Available {
+			t.Errorf("gh-pr-edit should be unavailable on a read-only profile")
+		}
+		if availability["gh-pr-edit"].Reason != "the profile is read-only" {
+			t.Errorf("reason = %q", availability["gh-pr-edit"].Reason)
+		}
+		if !availability["gh-pr-view"].Available {
+			t.Errorf("gh-pr-view should stay available: %+v", availability["gh-pr-view"])
+		}
+		if !availability["avenor-reply"].Available {
+			t.Errorf("avenor-reply should stay available: %+v", availability["avenor-reply"])
+		}
 	})
-	if err != nil {
-		t.Fatalf("availability: %v", err)
-	}
-	if availability["avenor-reply"].Available {
-		t.Errorf("avenor-reply should be unavailable without messaging")
-	}
-	if availability["avenor-reply"].Reason != "messaging is not enabled" {
-		t.Errorf("reason = %q", availability["avenor-reply"].Reason)
-	}
+
+	t.Run("messaging off: the reply tool drops out", func(t *testing.T) {
+		availability, err := reg.Availability(map[string]any{
+			"profile_side_effecting": true, "messaging_enabled": false,
+		})
+		if err != nil {
+			t.Fatalf("availability: %v", err)
+		}
+		if availability["avenor-reply"].Available {
+			t.Errorf("avenor-reply should be unavailable without messaging")
+		}
+		if availability["avenor-reply"].Reason != "messaging is not enabled" {
+			t.Errorf("reason = %q", availability["avenor-reply"].Reason)
+		}
+	})
 }
 
 func TestAvailabilityInputs(t *testing.T) {
@@ -176,7 +179,7 @@ func TestAvailabilityLoadFailures(t *testing.T) {
 					"rules": [{"type": "enabledWhen", "field": "gh-pr",
 						"when": {"op": "cond", "condition": "b"}}]
 				}}`,
-			wantErr: `undeclared condition "b"`,
+			wantErr: `Unknown condition "b"`,
 		},
 		{
 			name: "field-bound expression op",
@@ -254,7 +257,7 @@ func TestAvailabilityLoadFailures(t *testing.T) {
 					"rules": [{"type": "enabledWhen", "field": "gh-pr",
 						"when": {"op": "not", "expr": {"op": "condEq", "condition": "undeclared", "value": true}}}]
 				}}`,
-			wantErr: `undeclared condition "undeclared"`,
+			wantErr: `Unknown condition "undeclared"`,
 		},
 	}
 	for _, tc := range cases {
@@ -442,7 +445,10 @@ func TestAvailabilityCompositeFieldMismatchFailsLoad(t *testing.T) {
 	tool := `"t": {"description": "d", "command": ["echo"], "timeout": "1s",
 		"inputSchema": {"type": "object", "properties": {}, "additionalProperties": false},
 		"bindings": [], "output": {"mode": "raw"}}`
-	manifest := `{"version": 1, "tools": {` + tool + `},
+	manifest := `{"version": 1, "tools": {` + tool + `,
+		"echo": {"description": "e", "command": ["echo"], "timeout": "1s",
+			"inputSchema": {"type": "object", "properties": {}, "additionalProperties": false},
+			"bindings": [], "output": {"mode": "raw"}}},
 		"availability": {
 			"conditions": {"a": {"type": "boolean"}},
 			"rules": [{"type": "eitherOf", "group": "g", "branches": {
@@ -456,5 +462,67 @@ func TestAvailabilityCompositeFieldMismatchFailsLoad(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "must target the same fields") {
 		t.Errorf("error %q does not include the same-fields constraint", err.Error())
+	}
+}
+
+func TestAvailabilityConditionsOnlyBlockLoads(t *testing.T) {
+	// The spec declares rules optional; a conditions-only block must load
+	// and leave every tool available.
+	tool := `"t": {"description": "d", "command": ["echo"], "timeout": "1s",
+		"inputSchema": {"type": "object", "properties": {}, "additionalProperties": false},
+		"bindings": [], "output": {"mode": "raw"}}`
+	manifest := `{"version": 1, "tools": {` + tool + `},
+		"availability": {"conditions": {"on": {"type": "boolean"}}}}`
+	reg, err := Load(writeManifest(t, manifest))
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	availability, err := reg.Availability(map[string]any{"on": true})
+	if err != nil {
+		t.Fatalf("availability: %v", err)
+	}
+	if !availability["t"].Available {
+		t.Errorf("conditions-only block should gate nothing: %+v", availability["t"])
+	}
+	if len(reg.AvailabilityInputs()) != 1 {
+		t.Errorf("declared inputs = %v", reg.AvailabilityInputs())
+	}
+}
+
+func TestAvailabilityDisablesGatesTargets(t *testing.T) {
+	// A disables rule with a condition expression turns its targets off
+	// while the condition holds; targets stay enabled when it passes.
+	tool := func(name string) string {
+		return `"` + name + `": {"description": "d", "command": ["echo"], "timeout": "1s",
+			"inputSchema": {"type": "object", "properties": {}, "additionalProperties": false},
+			"bindings": [], "output": {"mode": "raw"}}`
+	}
+	manifest := `{"version": 1, "tools": {` + tool("a") + `, ` + tool("b") + `},
+		"availability": {
+			"conditions": {"maintenance": {"type": "boolean"}},
+			"rules": [{"type": "disables", "targets": ["b"],
+				"when": {"op": "cond", "condition": "maintenance"},
+				"reason": "maintenance window"}]
+		}}`
+	reg, err := Load(writeManifest(t, manifest))
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	availability, err := reg.Availability(map[string]any{"maintenance": true})
+	if err != nil {
+		t.Fatalf("availability: %v", err)
+	}
+	if availability["b"].Available || availability["b"].Reason != "maintenance window" {
+		t.Errorf("b during maintenance = %+v", availability["b"])
+	}
+	if !availability["a"].Available {
+		t.Errorf("a should be untouched: %+v", availability["a"])
+	}
+	availability, err = reg.Availability(map[string]any{"maintenance": false})
+	if err != nil {
+		t.Fatalf("availability: %v", err)
+	}
+	if !availability["b"].Available {
+		t.Errorf("b after maintenance = %+v", availability["b"])
 	}
 }

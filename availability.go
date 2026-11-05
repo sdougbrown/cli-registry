@@ -32,7 +32,10 @@ type availability struct {
 
 // availabilityRuleTypes are the rule shapes availability accepts. Every form
 // that references another tool's field (requires dependency/dependencies,
-// oneOf, disables source, fairWhen, check) is rejected at load.
+// oneOf, disables source, fairWhen, check) is rejected at load. Structural
+// rules otherwise stay Umpire's contract: SchemaFromObject validates the
+// schema (composites, conditions, members) before hydration and fails the
+// load with a SchemaError — no pre-validation duplicates that here.
 var availabilityRuleTypes = map[string]bool{
 	"requires": true, "enabledWhen": true, "disables": true, "anyOf": true, "eitherOf": true,
 }
@@ -84,6 +87,11 @@ func compileAvailability(raw json.RawMessage, toolNames []string) (*availability
 	}
 	generic["version"] = float64(1)
 	generic["fields"] = fields
+	// The spec declares rules optional; the Umpire contract requires the
+	// key, so a conditions-only block hydrates with an empty rule list.
+	if _, hasRules := generic["rules"]; !hasRules {
+		generic["rules"] = []any{}
+	}
 	schema, err := umpire.SchemaFromObject(generic)
 	if err != nil {
 		return nil, fmt.Errorf("availability: %w", err)
@@ -140,9 +148,6 @@ func validateAvailabilityRule(raw json.RawMessage, conditions map[string]string)
 		if err := json.Unmarshal(raw, &inner); err != nil {
 			return fmt.Errorf("decode anyOf rules: %w", err)
 		}
-		if err := validateCompositeTargets("anyOf", inner.Rules, conditions); err != nil {
-			return err
-		}
 		for i, innerRule := range inner.Rules {
 			if err := validateAvailabilityRule(innerRule, conditions); err != nil {
 				return fmt.Errorf("anyOf rule %d: %w", i, err)
@@ -160,43 +165,12 @@ func validateAvailabilityRule(raw json.RawMessage, conditions map[string]string)
 			flat = append(flat, branchRules...)
 			_ = branchName
 		}
-		if err := validateCompositeTargets("eitherOf", flat, conditions); err != nil {
-			return err
-		}
 		for branchName, branchRules := range inner.Branches {
 			for i, innerRule := range branchRules {
 				if err := validateAvailabilityRule(innerRule, conditions); err != nil {
 					return fmt.Errorf("eitherOf branch %q rule %d: %w", branchName, i, err)
 				}
 			}
-		}
-	}
-	return nil
-}
-
-// validateCompositeTargets enforces the composite contract that all operand
-// rules gate the same tool: distinct explicit fields fail. The Umpire runtime
-// panics on this violation during hydration, so it is caught before the
-// schema ever reaches it.
-func validateCompositeTargets(kind string, rules []json.RawMessage, conditions map[string]string) error {
-	explicit := ""
-	for _, rawRule := range rules {
-		var rule struct {
-			Field string `json:"field"`
-		}
-		if err := json.Unmarshal(rawRule, &rule); err != nil {
-			continue
-		}
-		if rule.Field == "" {
-			continue
-		}
-		if explicit == "" {
-			explicit = rule.Field
-		} else if explicit != rule.Field {
-			return fmt.Errorf(
-				"%s rules must target the same fields; operands name %q and %q",
-				kind, explicit, rule.Field,
-			)
 		}
 	}
 	return nil
@@ -213,12 +187,11 @@ func validateConditionExpr(raw json.RawMessage, conditions map[string]string) er
 	}
 	switch op {
 	case "cond", "condEq", "condIn":
+		// Condition existence and typing are Umpire's contract; the
+		// whitelist here only narrows which ops availability accepts.
 		var condition string
 		if err := json.Unmarshal(expr["condition"], &condition); err != nil {
 			return fmt.Errorf("%q expression requires a string condition", op)
-		}
-		if _, declared := conditions[condition]; !declared {
-			return fmt.Errorf("expression references undeclared condition %q", condition)
 		}
 	case "and", "or":
 		var inner struct {
