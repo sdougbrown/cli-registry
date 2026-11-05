@@ -160,11 +160,6 @@ func validateAvailabilityRule(raw json.RawMessage, conditions map[string]string)
 		if err := json.Unmarshal(raw, &inner); err != nil {
 			return fmt.Errorf("decode eitherOf branches: %w", err)
 		}
-		var flat []json.RawMessage
-		for branchName, branchRules := range inner.Branches {
-			flat = append(flat, branchRules...)
-			_ = branchName
-		}
 		for branchName, branchRules := range inner.Branches {
 			for i, innerRule := range branchRules {
 				if err := validateAvailabilityRule(innerRule, conditions); err != nil {

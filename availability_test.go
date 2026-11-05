@@ -526,3 +526,74 @@ func TestAvailabilityDisablesGatesTargets(t *testing.T) {
 		t.Errorf("b after maintenance = %+v", availability["b"])
 	}
 }
+
+func TestAvailabilityWrongTypedInputCoerces(t *testing.T) {
+	// Umpire evaluates condition values with JS-style truthiness and does
+	// not enforce declared types at runtime: a non-boolean input to a
+	// boolean condition coerces. This pins that behavior — if the contract
+	// ever enforces declared types, this test should flip to expecting an
+	// error.
+	tool := `"t": {"description": "d", "command": ["echo"], "timeout": "1s",
+		"inputSchema": {"type": "object", "properties": {}, "additionalProperties": false},
+		"bindings": [], "output": {"mode": "raw"}}`
+	manifest := `{"version": 1, "tools": {` + tool + `},
+		"availability": {
+			"conditions": {"on": {"type": "boolean"}},
+			"rules": [{"type": "enabledWhen", "field": "t",
+				"when": {"op": "cond", "condition": "on"}}]
+		}}`
+	reg, err := Load(writeManifest(t, manifest))
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	// A non-empty string is truthy → the gate passes, matching Boolean().
+	availability, err := reg.Availability(map[string]any{"on": "yes"})
+	if err != nil {
+		t.Fatalf("availability: %v", err)
+	}
+	if !availability["t"].Available {
+		t.Errorf("truthy string should pass a cond gate: %+v", availability["t"])
+	}
+	// An empty string is falsy → the gate fails.
+	availability, err = reg.Availability(map[string]any{"on": ""})
+	if err != nil {
+		t.Fatalf("availability: %v", err)
+	}
+	if availability["t"].Available {
+		t.Errorf("empty string should fail a cond gate: %+v", availability["t"])
+	}
+}
+
+func TestAvailabilityAndExpressionRuntime(t *testing.T) {
+	tool := `"t": {"description": "d", "command": ["echo"], "timeout": "1s",
+		"inputSchema": {"type": "object", "properties": {}, "additionalProperties": false},
+		"bindings": [], "output": {"mode": "raw"}}`
+	manifest := `{"version": 1, "tools": {` + tool + `},
+		"availability": {
+			"conditions": {"window_open": {"type": "boolean"}, "staffed": {"type": "boolean"}},
+			"rules": [{"type": "enabledWhen", "field": "t",
+				"when": {"op": "and", "exprs": [
+					{"op": "cond", "condition": "window_open"},
+					{"op": "cond", "condition": "staffed"}
+				]},
+				"reason": "needs window and staffing"}]
+		}}`
+	reg, err := Load(writeManifest(t, manifest))
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	availability, err := reg.Availability(map[string]any{"window_open": true, "staffed": true})
+	if err != nil {
+		t.Fatalf("availability: %v", err)
+	}
+	if !availability["t"].Available {
+		t.Errorf("both conditions true should enable: %+v", availability["t"])
+	}
+	availability, err = reg.Availability(map[string]any{"window_open": true, "staffed": false})
+	if err != nil {
+		t.Fatalf("availability: %v", err)
+	}
+	if availability["t"].Available || availability["t"].Reason != "needs window and staffing" {
+		t.Errorf("one condition false should disable with the rule reason: %+v", availability["t"])
+	}
+}
