@@ -44,10 +44,6 @@ var availabilityRuleTypes = map[string]bool{
 // compiled tool set and compiles it to an engine. Rules may only reference
 // declared conditions; every tool becomes a schema field.
 func compileAvailability(raw json.RawMessage, toolNames []string) (*availability, error) {
-	if len(raw) == 0 {
-		return nil, nil
-	}
-
 	var block struct {
 		Conditions map[string]json.RawMessage `json:"conditions"`
 		Rules      []json.RawMessage          `json:"rules"`
@@ -84,6 +80,16 @@ func compileAvailability(raw json.RawMessage, toolNames []string) (*availability
 	var generic map[string]any
 	if err := json.Unmarshal(raw, &generic); err != nil {
 		return nil, fmt.Errorf("decode availability: %w", err)
+	}
+	// The block is a strict subset: only conditions and rules. Sibling
+	// Umpire keys (validators, excluded, ...) would silently compile into
+	// the engine while their effects never surface through Availability.
+	for key := range generic {
+		if key != "conditions" && key != "rules" {
+			return nil, fmt.Errorf(
+				"availability block has unknown member %q; only conditions and rules are supported", key,
+			)
+		}
 	}
 	generic["version"] = float64(1)
 	generic["fields"] = fields

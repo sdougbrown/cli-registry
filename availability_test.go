@@ -597,3 +597,92 @@ func TestAvailabilityAndExpressionRuntime(t *testing.T) {
 		t.Errorf("one condition false should disable with the rule reason: %+v", availability["t"])
 	}
 }
+
+func TestAvailabilityRejectsSiblingKeys(t *testing.T) {
+	// Umpire's schema accepts validators and excluded; the availability
+	// block must not — their effects never surface through Availability.
+	tool := `"t": {"description": "d", "command": ["echo"], "timeout": "1s",
+		"inputSchema": {"type": "object", "properties": {}, "additionalProperties": false},
+		"bindings": [], "output": {"mode": "raw"}}`
+	manifest := `{"version": 1, "tools": {` + tool + `},
+		"availability": {
+			"conditions": {"on": {"type": "boolean"}},
+			"validators": {"t": {"op": "email", "error": "bad"}},
+			"rules": []
+		}}`
+	_, err := Load(writeManifest(t, manifest))
+	if err == nil || !strings.Contains(err.Error(), `unknown member "validators"`) {
+		t.Errorf("error = %v, want a sibling-member rejection", err)
+	}
+}
+
+func TestAvailabilityMergesAcrossFiles(t *testing.T) {
+	// One manifest carries the availability block, a sibling carries only
+	// tools; Load must keep the gating.
+	dir := t.TempDir()
+	gated := `"t": {"description": "d", "command": ["echo"], "timeout": "1s",
+		"inputSchema": {"type": "object", "properties": {}, "additionalProperties": false},
+		"bindings": [], "output": {"mode": "raw"}}`
+	first := `{"version": 1, "tools": {` + gated + `},
+		"availability": {
+			"conditions": {"on": {"type": "boolean"}},
+			"rules": [{"type": "enabledWhen", "field": "t",
+				"when": {"op": "cond", "condition": "on"}, "reason": "not on"}]
+		}}`
+	second := `{"version": 1, "tools": {"u": {"description": "d", "command": ["echo"], "timeout": "1s",
+		"inputSchema": {"type": "object", "properties": {}, "additionalProperties": false},
+		"bindings": [], "output": {"mode": "raw"}}}}`
+	for name, body := range map[string]string{"a.json": first, "b.json": second} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	reg, err := Load(dir)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	availability, err := reg.Availability(map[string]any{"on": false})
+	if err != nil {
+		t.Fatalf("availability: %v", err)
+	}
+	if availability["t"].Available || availability["t"].Reason != "not on" {
+		t.Errorf("gating lost across files: %+v", availability["t"])
+	}
+	if !availability["u"].Available {
+		t.Errorf("ungated tool should stay available: %+v", availability["u"])
+	}
+}
+
+func TestAvailabilityReasonsAccumulate(t *testing.T) {
+	tool := `"t": {"description": "d", "command": ["echo"], "timeout": "1s",
+		"inputSchema": {"type": "object", "properties": {}, "additionalProperties": false},
+		"bindings": [], "output": {"mode": "raw"}}`
+	manifest := `{"version": 1, "tools": {` + tool + `},
+		"availability": {
+			"conditions": {"a": {"type": "boolean"}, "b": {"type": "boolean"}},
+			"rules": [
+				{"type": "enabledWhen", "field": "t",
+				 "when": {"op": "cond", "condition": "a"}, "reason": "first failure"},
+				{"type": "enabledWhen", "field": "t",
+				 "when": {"op": "cond", "condition": "b"}, "reason": "second failure"}
+			]
+		}}`
+	reg, err := Load(writeManifest(t, manifest))
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	availability, err := reg.Availability(map[string]any{"a": false, "b": false})
+	if err != nil {
+		t.Fatalf("availability: %v", err)
+	}
+	got := availability["t"]
+	if got.Available {
+		t.Fatalf("both rules failing should disable the tool")
+	}
+	if len(got.Reasons) != 2 || got.Reasons[0] != "first failure" || got.Reasons[1] != "second failure" {
+		t.Errorf("reasons = %v, want both in declaration order", got.Reasons)
+	}
+	if got.Reason != "first failure" {
+		t.Errorf("reason = %q, want the first failure", got.Reason)
+	}
+}
