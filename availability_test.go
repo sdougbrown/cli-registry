@@ -439,6 +439,39 @@ func TestAvailabilityDuplicateAcrossFiles(t *testing.T) {
 	}
 }
 
+func TestAvailabilityMergeWithToolOnlyFile(t *testing.T) {
+	// A sibling file without an availability block must not erase the block
+	// another file in the same directory declared; losing it would gate
+	// nothing and report every tool as available.
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "a.json"), []byte(availabilityFixture), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	toolOnly := `{"version": 1, "tools": {"echo-tool": {"description": "d", "command": ["echo"], "timeout": "1s",
+		"inputSchema": {"type": "object", "properties": {}, "additionalProperties": false},
+		"bindings": [], "output": {"mode": "raw"}}}}`
+	if err := os.WriteFile(filepath.Join(dir, "b.json"), []byte(toolOnly), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	reg, err := Load(dir)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	availability, err := reg.Availability(map[string]any{"profile_side_effecting": false, "messaging_enabled": true})
+	if err != nil {
+		t.Fatalf("availability: %v", err)
+	}
+	if !availability["echo-tool"].Available {
+		t.Errorf("echo-tool should stay available: %+v", availability["echo-tool"])
+	}
+	if availability["gh-pr-edit"].Available {
+		t.Error("gh-pr-edit should be gated off with profile_side_effecting false")
+	}
+	if availability["gh-pr-edit"].Reason != "the profile is read-only" {
+		t.Errorf("gh-pr-edit reason = %q", availability["gh-pr-edit"].Reason)
+	}
+}
+
 func TestAvailabilityCompositeFieldMismatchFailsLoad(t *testing.T) {
 	// The Umpire runtime panics when composite operands gate different
 	// tools; the load pre-validation must reject the manifest first.
