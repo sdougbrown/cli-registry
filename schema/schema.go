@@ -338,6 +338,15 @@ func (v *ValueSchema) Validate(value any) []StructuralIssue {
 	return issues
 }
 
+// StringProperty reports whether a top-level object property has string type.
+func (v *ValueSchema) StringProperty(name string) bool {
+	if v.root == nil || v.root.kind != kindObject {
+		return false
+	}
+	p := v.root.properties[name]
+	return p != nil && p.kind == kindString
+}
+
 func validateNode(n *node, value any, path string, issues *[]StructuralIssue) {
 	if n == nil {
 		return

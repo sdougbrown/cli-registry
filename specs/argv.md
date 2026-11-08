@@ -12,7 +12,7 @@ properties. Each row:
 | Field | Type | Meaning |
 |---|---|---|
 | `property` | string | must match a top-level `inputSchema` property (exact correspondence; see below) |
-| `style` | enum | `equals` \| `space` \| `short` \| `positional` |
+| `style` | enum | `equals` \| `space` \| `short` \| `positional` \| `stdin` |
 | `flag` | string | flag text (required for `equals`/`space`/`short`); e.g. `--state` |
 | `short` | string | short flag (only for `short` style) |
 
@@ -47,6 +47,23 @@ Let `v` be the validated value for a bound property and `s` its schema type.
 - scalar (string/number/boolean): append `<value>` directly
 - array: append each element directly
 - object: **rejected at compile time**
+
+### `stdin`
+- A single string property supplies the child's standard input, byte for byte.
+  After the input is written, the stream closes so the child can read to EOF.
+  No input value appears in argv.
+- `flag` is optional. When supplied, it is emitted as one argv element if and
+  only if the property is present, including when its value is an empty string.
+- When the property is absent, stdin is closed and the flag is omitted. At most
+  one property may use this style. Other types are rejected at compile time.
+- The binding counts toward exact correspondence just like an argv binding.
+  `Plan.Stdin` is nil for absent input and points to the string for present
+  input. Hosts running a plan must send the complete input and close stdin.
+- The schema's constraints apply to the input. This binding adds no byte limit;
+  callers and commands must enforce any limits they require. Stdin avoids argv
+  exposure but does not hide the value from tool calls or command output.
+- `Call` reports an incomplete input write when the command would otherwise
+  succeed. When the command fails, its exit error takes precedence.
 
 ## Scalar encoding
 
@@ -95,6 +112,7 @@ escape described above.
 - `object`/`other` type on any binding style (objects cannot be flattened to argv in v1).
 - `boolean` in `positional` style.
 - Unsupported `style` value.
+- Multiple stdin bindings, or a stdin binding on a non-string property.
 - Schema×style combos not enumerated above.
 
 ## Examples
@@ -111,4 +129,7 @@ escape described above.
 
 // positional tail
 { "style": "positional", "property": "paths" }
+
+// stdin, enabled by a flag when the property is present
+{ "style": "stdin", "property": "message", "flag": "--message-stdin" }
 ```

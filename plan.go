@@ -41,6 +41,7 @@ type EnvBinding struct {
 type Plan struct {
 	Tool    string        // tool name
 	Argv    []string      // Argv[0] is the resolved command path
+	Stdin   *string       // nil means no input; non-nil may point to an empty string
 	Env     []EnvBinding  // the manifest's declared env, unresolved, name-sorted
 	Dir     string        // set only when the manifest or WithCWD fixes it; "" = the host decides
 	Timeout time.Duration // the manifest's, or WithTimeout's
@@ -86,7 +87,7 @@ func (r *Registry) Plan(tool Tool, args map[string]any, opt ...Option) (*Plan, e
 		return nil, &ValidationError{Tool: t.name, Issues: issues}
 	}
 
-	argv, err := t.buildArgv(args, &opts)
+	argv, stdin, err := t.buildArgv(args, &opts)
 	if err != nil {
 		return nil, &DefinitionError{Tool: t.name, Err: err}
 	}
@@ -118,6 +119,7 @@ func (r *Registry) Plan(tool Tool, args map[string]any, opt ...Option) (*Plan, e
 	return &Plan{
 		Tool:      t.name,
 		Argv:      append([]string(nil), argv...),
+		Stdin:     stdin,
 		Env:       env,
 		Dir:       dir,
 		Timeout:   timeout,
