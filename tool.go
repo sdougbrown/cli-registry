@@ -254,12 +254,14 @@ func resolveCommand(bin string) (string, error) {
 	return filepath.Abs(path)
 }
 
-// buildArgv converts validated args into an argv sequence per specs/argv.md.
-func (t *tool) buildArgv(args map[string]any, opts *callOptions) ([]string, error) {
+// buildArgv converts validated args into an argv sequence per specs/argv.md,
+// capturing the stdin binding's value alongside the argv it emits.
+func (t *tool) buildArgv(args map[string]any, opts *callOptions) ([]string, *string, error) {
 	if len(t.bindings) == 0 {
-		return t.command, nil
+		return t.command, nil, nil
 	}
 	argv := append([]string{}, t.command...)
+	var stdin *string
 	// deterministic order: props sorted, positionals last
 	type item struct {
 		b       binding
@@ -280,28 +282,29 @@ func (t *tool) buildArgv(args map[string]any, opts *callOptions) ([]string, erro
 		}
 		return items[i].b.property < items[j].b.property
 	})
+	var err error
 	first := true
 	for _, it := range items {
 		if !it.present {
 			continue
 		}
-		arg2, nextFirst, err := t.appendBinding(argv, it.b, it.v, first)
+		argv, first, err = t.appendBinding(argv, it.b, it.v, first, &stdin)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
-		argv = arg2
-		first = nextFirst
 	}
-	return argv, nil
+	return argv, stdin, nil
 }
 
-func (t *tool) appendBinding(argv []string, b binding, v any, first bool) ([]string, bool, error) {
+func (t *tool) appendBinding(argv []string, b binding, v any, first bool, stdin **string) ([]string, bool, error) {
 	scalar := isScalar(v)
 	switch b.style {
 	case "stdin":
 		if b.flag != "" {
 			argv = append(argv, b.flag)
 		}
+		s := v.(string)
+		*stdin = &s
 		return argv, first, nil
 	case "equals":
 		key := b.flag

@@ -87,7 +87,7 @@ func (r *Registry) Plan(tool Tool, args map[string]any, opt ...Option) (*Plan, e
 		return nil, &ValidationError{Tool: t.name, Issues: issues}
 	}
 
-	argv, err := t.buildArgv(args, &opts)
+	argv, stdin, err := t.buildArgv(args, &opts)
 	if err != nil {
 		return nil, &DefinitionError{Tool: t.name, Err: err}
 	}
@@ -114,16 +114,6 @@ func (r *Registry) Plan(tool Tool, args map[string]any, opt ...Option) (*Plan, e
 	timeout := t.timeout
 	if opts.timeout > 0 {
 		timeout = opts.timeout
-	}
-
-	var stdin *string
-	for _, b := range t.bindings {
-		if b.style == "stdin" {
-			if v, present := args[b.property]; present {
-				s := v.(string)
-				stdin = &s
-			}
-		}
 	}
 
 	return &Plan{
