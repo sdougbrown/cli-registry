@@ -185,3 +185,29 @@ func TestStdinCancellation(t *testing.T) {
 		t.Fatal("error leaked input")
 	}
 }
+
+func TestStdinManifestTimeout(t *testing.T) {
+	r := fixtureRegistry(t, map[string]fixtureDef{
+		"blocked": {
+			env:        map[string]string{"GO_WANT_HELPER_PROCESS": "1", "FAKE_SLEEP": "30s"},
+			timeout:    "100ms",
+			properties: map[string]any{"data": map[string]any{"type": "string"}},
+			bindings:   []map[string]any{{"property": "data", "style": "stdin"}},
+		},
+	})
+	start := time.Now()
+	_, err := r.Call(context.Background(), mustTool(t, r, "blocked"), map[string]any{"data": strings.Repeat("secret", 1<<18)})
+	var timeoutErr *TimeoutError
+	if !errors.As(err, &timeoutErr) {
+		t.Fatalf("got %v, want *TimeoutError", err)
+	}
+	if timeoutErr.Cause != nil {
+		t.Fatalf("manifest timeout carried Cause %v, want nil", timeoutErr.Cause)
+	}
+	if time.Since(start) > 3*time.Second {
+		t.Fatalf("call blocked on unread stdin for %s", time.Since(start))
+	}
+	if strings.Contains(err.Error(), "secret") {
+		t.Fatal("error leaked input")
+	}
+}
