@@ -301,6 +301,8 @@ func (p *Plan) run(ctx context.Context) (*Result, error) {
 	waitErr := ex.awaitExit()
 	var inputErr error
 	if inW != nil {
+		// A descendant may still hold the read end. Closing the writer here
+		// unblocks a write that cannot finish after the leader exits.
 		inW.Close()
 		inputErr = <-inputDone
 	}
