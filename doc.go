@@ -109,7 +109,8 @@
 // # Process lifecycle (Call's engine)
 //
 //   - The child runs in its own process group with stdin supplied from the plan
-//     and both output streams captured up to 1 MiB each. Stdin closes at EOF.
+//     and both output streams captured up to 1 MiB each. The writer closes stdin
+//     after sending the input so the child reads EOF.
 //   - A cancelled or already-cancelled context stops the run immediately (the
 //     process group on the Linux path; only the leader on the fallback
 //     described below) and returns a *TimeoutError with Cause set to

@@ -240,9 +240,7 @@ func (p *Plan) run(ctx context.Context) (*Result, error) {
 		inputDone = make(chan error, 1)
 		go func() {
 			_, err := io.WriteString(inW, *p.Stdin)
-			if closeErr := inW.Close(); err == nil {
-				err = closeErr
-			}
+			inW.Close()
 			inputDone <- err
 		}()
 	}

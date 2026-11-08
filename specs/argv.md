@@ -50,7 +50,8 @@ Let `v` be the validated value for a bound property and `s` its schema type.
 
 ### `stdin`
 - A single string property supplies the child's standard input, byte for byte.
-  The stream closes at EOF. No input value appears in argv.
+  After the input is written, the stream closes so the child can read to EOF.
+  No input value appears in argv.
 - `flag` is optional. When supplied, it is emitted as one argv element if and
   only if the property is present, including when its value is an empty string.
 - When the property is absent, stdin is closed and the flag is omitted. At most
@@ -61,6 +62,8 @@ Let `v` be the validated value for a bound property and `s` its schema type.
 - The schema's constraints apply to the input. This binding adds no byte limit;
   callers and commands must enforce any limits they require. Stdin avoids argv
   exposure but does not hide the value from tool calls or command output.
+- `Call` reports an incomplete input write when the command would otherwise
+  succeed. When the command fails, its exit error takes precedence.
 
 ## Scalar encoding
 

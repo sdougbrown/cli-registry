@@ -41,7 +41,7 @@ type tool struct {
 type binding struct {
 	property string
 	style    string // equals | space | short | positional | stdin
-	flag     string // flag text (equals/space) or short flag (short)
+	flag     string // flag text for equals, space, short, or stdin
 }
 
 type outputConfig struct {

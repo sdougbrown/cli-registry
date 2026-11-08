@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -59,6 +60,10 @@ func TestHelperProcess(t *testing.T) {
 	switch os.Getenv("FAKE_OUTPUT") {
 	case "stdin":
 		readFixtureStdin()
+	case "stdin-fixed":
+		if _, err := io.CopyN(io.Discard, os.Stdin, 128<<10); err != nil {
+			os.Exit(2)
+		}
 	case "json":
 		fmt.Println(`{"ok":true,"value":42}`)
 	case "pointer":

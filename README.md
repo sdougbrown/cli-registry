@@ -133,6 +133,8 @@ an optional flag when the property is present; see [the binding spec](specs/argv
 
 - the child runs in its own process group, with stdin supplied from the plan and both output streams
   captured up to 1 MiB each;
+- an incomplete stdin write returns a wrapped write error if the command exits
+  successfully; a failed command returns its `ExecError` instead;
 - a cancelled context stops the run within milliseconds (the whole process
   group on the Linux path, only the leader on the fallback below) and returns
   `*cliregistry.TimeoutError` with `Cause` set to `ctx.Err()` (as v0.1.0

@@ -20,6 +20,11 @@ func TestStdinBinding(t *testing.T) {
 			properties: map[string]any{"message": map[string]any{"type": "string"}},
 			bindings:   []map[string]any{{"property": "message", "style": "stdin", "flag": "--message-stdin"}},
 		},
+		"flagless": {
+			env:        map[string]string{"GO_WANT_HELPER_PROCESS": "1", "FAKE_OUTPUT": "stdin"},
+			properties: map[string]any{"message": map[string]any{"type": "string"}},
+			bindings:   []map[string]any{{"property": "message", "style": "stdin"}},
+		},
 	})
 	tool := mustTool(t, r, "stdin")
 	for _, tc := range []struct {
@@ -63,12 +68,33 @@ func TestStdinBinding(t *testing.T) {
 			}
 		})
 	}
+	res, err := r.Call(context.Background(), mustTool(t, r, "flagless"), map[string]any{"message": "flagless\n"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got struct {
+		Input string   `json:"input"`
+		Args  []string `json:"args"`
+	}
+	if err := json.Unmarshal(res.Stdout, &got); err != nil || got.Input != "flagless\n" || slices.Contains(got.Args, "--message-stdin") {
+		t.Fatalf("flagless result: %+v, %v", got, err)
+	}
+	_, err = r.Call(context.Background(), tool, map[string]any{"message": 42})
+	var invalid *ValidationError
+	if !errors.As(err, &invalid) {
+		t.Fatalf("invalid input: %v", err)
+	}
 }
 
 func TestStdinIncompleteWrite(t *testing.T) {
 	r := fixtureRegistry(t, map[string]fixtureDef{
 		"early": {
 			env:        map[string]string{"GO_WANT_HELPER_PROCESS": "1", "FAKE_OUTPUT": "quiet"},
+			properties: map[string]any{"data": map[string]any{"type": "string"}},
+			bindings:   []map[string]any{{"property": "data", "style": "stdin"}},
+		},
+		"failure": {
+			env:        map[string]string{"GO_WANT_HELPER_PROCESS": "1", "FAKE_EXIT": "3"},
 			properties: map[string]any{"data": map[string]any{"type": "string"}},
 			bindings:   []map[string]any{{"property": "data", "style": "stdin"}},
 		},
@@ -79,6 +105,27 @@ func TestStdinIncompleteWrite(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), "secret") {
 		t.Fatal("error leaked input")
+	}
+	_, err = r.Call(context.Background(), mustTool(t, r, "failure"), map[string]any{"data": strings.Repeat("secret", 1<<18)})
+	var exit *ExecError
+	if !errors.As(err, &exit) || exit.ExitCode != 3 {
+		t.Fatalf("child failure: %v", err)
+	}
+}
+
+func TestStdinCompleteWriteBeforeExit(t *testing.T) {
+	r := fixtureRegistry(t, map[string]fixtureDef{
+		"fixed": {
+			env:        map[string]string{"GO_WANT_HELPER_PROCESS": "1", "FAKE_OUTPUT": "stdin-fixed", "GORACE": "atexit_sleep_ms=0"},
+			properties: map[string]any{"data": map[string]any{"type": "string"}},
+			bindings:   []map[string]any{{"property": "data", "style": "stdin"}},
+		},
+	})
+	tool := mustTool(t, r, "fixed")
+	for i := 0; i < 30; i++ {
+		if _, err := r.Call(context.Background(), tool, map[string]any{"data": strings.Repeat("x", 128<<10)}); err != nil {
+			t.Fatalf("fully delivered input: %v", err)
+		}
 	}
 }
 
