@@ -101,7 +101,7 @@ dir := p.Dir
 if dir == "" {
     dir = sessionDir // the manifest left the directory to the host
 }
-out, err := executor.Run(ctx, p.Argv, env, dir, p.Timeout) // your argv, env, cwd, lifetime
+out, err := executor.Run(ctx, p.Argv, p.Stdin, env, dir, p.Timeout) // your input, argv, env, cwd, lifetime
 if err != nil {
     return err // the executor's own cancel, timeout or start error
 }
@@ -124,9 +124,14 @@ cancel, timeout and start errors before calling it — the same killed-process
 output is a `*cliregistry.TimeoutError` through `Call` and an `*ExecError`
 through `Finish`.
 
+`Plan.Stdin` is nil when no input is bound, and otherwise points to the exact
+string to write, including an empty string. A host executor must close stdin
+after sending it; a nil input keeps stdin closed. The `stdin` binding can emit
+an optional flag when the property is present; see [the binding spec](specs/argv.md).
+
 `Call` runs that same plan with the library's own engine:
 
-- the child runs in its own process group, with stdin closed and both streams
+- the child runs in its own process group, with stdin supplied from the plan and both output streams
   captured up to 1 MiB each;
 - a cancelled context stops the run within milliseconds (the whole process
   group on the Linux path, only the leader on the fallback below) and returns

@@ -57,6 +57,8 @@ func TestHelperProcess(t *testing.T) {
 		os.Exit(ec)
 	}
 	switch os.Getenv("FAKE_OUTPUT") {
+	case "stdin":
+		readFixtureStdin()
 	case "json":
 		fmt.Println(`{"ok":true,"value":42}`)
 	case "pointer":

@@ -45,13 +45,14 @@
 //	if err != nil { ... }                       // a declared reference the host cannot resolve
 //	dir := p.Dir
 //	if dir == "" { dir = sessionDir }           // the manifest left it to the host
-//	out, err := myExecutor(ctx, p.Argv, env, dir, p.Timeout)
+//	out, err := myExecutor(ctx, p.Argv, p.Stdin, env, dir, p.Timeout)
 //	if err != nil { ... }                       // my own cancel, timeout or start error
 //	res, err := p.Finish(out)                   // same classification as Call
 //
 //	type Plan struct {
 //	    Tool    string
 //	    Argv    []string      // Argv[0] is the resolved command path
+//	    Stdin   *string       // nil means no input; non-nil may point to an empty string
 //	    Env     []EnvBinding  // the manifest's declared env, unresolved, name-sorted
 //	    Dir     string        // set only when the manifest or WithCWD fixes it; "" = the host decides
 //	    Timeout time.Duration // the manifest's, or WithTimeout's
@@ -107,8 +108,8 @@
 //
 // # Process lifecycle (Call's engine)
 //
-//   - The child runs in its own process group with stdin closed and both
-//     streams captured up to 1 MiB each.
+//   - The child runs in its own process group with stdin supplied from the plan
+//     and both output streams captured up to 1 MiB each. Stdin closes at EOF.
 //   - A cancelled or already-cancelled context stops the run immediately (the
 //     process group on the Linux path; only the leader on the fallback
 //     described below) and returns a *TimeoutError with Cause set to

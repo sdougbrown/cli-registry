@@ -40,7 +40,7 @@ type tool struct {
 
 type binding struct {
 	property string
-	style    string // equals | space | short | positional
+	style    string // equals | space | short | positional | stdin
 	flag     string // flag text (equals/space) or short flag (short)
 }
 
@@ -162,6 +162,7 @@ func (r *Registry) compileTool(doc *manifest.Document, name string) error {
 		}
 	} else {
 		bound := map[string]bool{}
+		stdinBound := false
 		for _, b := range def.Bindings {
 			if b == nil || b.Property == "" || b.Style == "" {
 				return errors.New("binding requires property and style")
@@ -183,6 +184,14 @@ func (r *Registry) compileTool(doc *manifest.Document, name string) error {
 					return fmt.Errorf("binding %q (short) requires a flag", b.Property)
 				}
 			case "positional":
+			case "stdin":
+				if stdinBound {
+					return errors.New("only one stdin binding is allowed")
+				}
+				if !vs.StringProperty(b.Property) {
+					return fmt.Errorf("stdin binding %q requires a string property", b.Property)
+				}
+				stdinBound = true
 			default:
 				return fmt.Errorf("binding %q: unsupported style %q", b.Property, b.Style)
 			}
@@ -289,6 +298,11 @@ func (t *tool) buildArgv(args map[string]any, opts *callOptions) ([]string, erro
 func (t *tool) appendBinding(argv []string, b binding, v any, first bool) ([]string, bool, error) {
 	scalar := isScalar(v)
 	switch b.style {
+	case "stdin":
+		if b.flag != "" {
+			argv = append(argv, b.flag)
+		}
+		return argv, first, nil
 	case "equals":
 		key := b.flag
 		if bv, ok := v.(bool); ok {

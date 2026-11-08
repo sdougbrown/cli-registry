@@ -27,7 +27,7 @@ Each tool:
 | `cwd` | object | no | `{ mode: "allow"|"inherit", roots: []string }`; relative roots resolve against the manifest file |
 | `timeout` | string (Go duration) | yes | mandatory |
 | `inputSchema` | object | yes | **one** JSON Schema per tool (below) |
-| `bindings` | object/array | yes | argv-binding table keyed by top-level property (see argv.md) |
+| `bindings` | object/array | yes | input binding table keyed by top-level property (see argv.md) |
 | `output` | object | yes | `{ mode: "raw"|"json"|"json-pointer", json_pointer?: string, success_exit_codes?: []int }` (default `[0]`) |
 
 ## inputSchema model

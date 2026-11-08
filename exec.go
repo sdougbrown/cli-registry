@@ -196,7 +196,16 @@ func (p *Plan) run(ctx context.Context) (*Result, error) {
 	cmd := exec.Command(p.Argv[0], p.Argv[1:]...)
 	cmd.Env = env
 	cmd.Dir = p.Dir // "" leaves the choice to the process engine (inherit)
-	cmd.Stdin = nil
+	var inR, inW *os.File
+	if p.Stdin != nil {
+		inR, inW, err = os.Pipe()
+		if err != nil {
+			return nil, fmt.Errorf("stdin: %w", err)
+		}
+		defer inR.Close()
+		defer inW.Close()
+		cmd.Stdin = inR
+	}
 
 	// Own the capture pipes so that a descendant holding one cannot keep
 	// cmd.Wait blocked: the parent closes its write ends right after Start, and
@@ -224,6 +233,18 @@ func (p *Plan) run(ctx context.Context) (*Result, error) {
 		errR.Close()
 		errW.Close()
 		return nil, fmt.Errorf("start: %w", err)
+	}
+	var inputDone chan error
+	if inW != nil {
+		inR.Close()
+		inputDone = make(chan error, 1)
+		go func() {
+			_, err := io.WriteString(inW, *p.Stdin)
+			if closeErr := inW.Close(); err == nil {
+				err = closeErr
+			}
+			inputDone <- err
+		}()
 	}
 	outW.Close()
 	errW.Close()
@@ -280,6 +301,11 @@ func (p *Plan) run(ctx context.Context) (*Result, error) {
 	}()
 
 	waitErr := ex.awaitExit()
+	var inputErr error
+	if inW != nil {
+		inW.Close()
+		inputErr = <-inputDone
+	}
 	hookAfterWait(cmd)
 	close(ctxDone)
 	<-cancelDone
@@ -347,6 +373,9 @@ func (p *Plan) run(ctx context.Context) (*Result, error) {
 		return nil, err
 	}
 	out.ExitCode = code
+	if inputErr != nil && p.t.output.successExitCodes[code] {
+		return nil, fmt.Errorf("stdin: %w", inputErr)
+	}
 	return p.Finish(out)
 }
 
