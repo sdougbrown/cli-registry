@@ -120,6 +120,48 @@ func TestAFreeFormObjectTakesAnyKeys(t *testing.T) {
 	assertIssue(t, vs, map[string]any{}, "required", "/args")
 }
 
+// TestFreeFormObjectRequiredNeedNotBeInProperties covers the canonical
+// free-form use: a required key that is not declared as a typed
+// property compiles (the fieldMismatch check is suppressed for
+// free-form objects) and is enforced by required at validation time.
+func TestFreeFormObjectRequiredNeedNotBeInProperties(t *testing.T) {
+	vs := mustCompileOK(t, map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"name": map[string]any{"type": "string"},
+		},
+		"required":             []any{"name", "anything"},
+		"additionalProperties": true,
+	})
+	// The required key absent from properties is accepted; its value
+	// is unconstrained unless declared.
+	if got := vs.Validate(map[string]any{"name": "ok", "anything": map[string]any{"deep": true}}); len(got) != 0 {
+		t.Fatalf("expected valid, got %v", got)
+	}
+	// required still enforces the key's presence.
+	assertIssue(t, vs, map[string]any{"name": "ok"}, "required", "/anything")
+}
+
+// TestClosedObjectRequiredMustBeInProperties pins the closed object
+// (additionalProperties: false) keeping the fieldMismatch check: a
+// required key absent from properties still fails compilation.
+func TestClosedObjectRequiredMustBeInProperties(t *testing.T) {
+	_, err := Compile(map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"name": map[string]any{"type": "string"},
+		},
+		"required":             []any{"name", "anything"},
+		"additionalProperties": false,
+	})
+	if err == nil {
+		t.Fatal("expected rejection for required key not in properties")
+	}
+	if !findCode(t, err, "fieldMismatch") {
+		t.Fatalf("expected fieldMismatch, got %v", err)
+	}
+}
+
 func TestBasicTypesAndConstraints(t *testing.T) {
 	vs := mustCompileOK(t, map[string]any{
 		"type": "object",

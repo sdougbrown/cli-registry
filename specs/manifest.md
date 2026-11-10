@@ -33,12 +33,14 @@ Each tool:
 ## inputSchema model
 
 Exactly **one** root `inputSchema` per tool. It may contain local `$defs` and
-`#/$defs/...` references; `additionalProperties: false` at every object level.
+`#/$defs/...` references; every object level declares `additionalProperties` —
+`false` (closed) or `true` (free-form: any keys allowed, declared properties
+still validated when present).
 
 Supported vocabulary is exactly the umpire-json-schema profile v1 subset:
 
 - `type`: `string`, `number`, `integer`, `boolean`, `array`, `object`
-- `properties`, `required`, `additionalProperties: false`
+- `properties`, `required`, `additionalProperties: false` or `true`
 - `items` (single homogeneous schema), `minItems`, `maxItems`
 - `minLength`, `maxLength`, `minimum`, `maximum`, `exclusiveMinimum`, `exclusiveMaximum`
 - `enum`, `const`
