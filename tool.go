@@ -146,6 +146,18 @@ func (r *Registry) compileTool(doc *manifest.Document, name string) error {
 	if err != nil {
 		return fmt.Errorf("compile inputSchema: %w", err)
 	}
+	// The root must stay closed: bindings key argv conversion off
+	// top-level properties, so a free-form root would let undeclared keys
+	// pass validation and be silently dropped from argv.
+	// Same diagnostics path as schema-shape rejections: a CompileError
+	// issue carrying an RFC-6901 pointer to the offending declaration.
+	if ap, ok := def.InputSchema["additionalProperties"].(bool); ok && ap {
+		return &schema.CompileError{Issues: []schema.DefinitionIssue{{
+			Code:    "freeFormRoot",
+			Path:    "/additionalProperties",
+			Message: "root must declare additionalProperties: false; free-form objects are allowed only at nested levels",
+		}}}
+	}
 	t.schema = vs
 	t.inputSchemaRaw = def.InputSchema
 

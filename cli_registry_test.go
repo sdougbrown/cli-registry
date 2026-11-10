@@ -13,6 +13,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/sdougbrown/cli-registry/schema"
 )
 
 // TestHelperProcess is re-invoked by cli-registry as a fake CLI. When
@@ -323,6 +325,53 @@ func TestNonPositiveTimeoutIsRejectedAtLoad(t *testing.T) {
 				t.Fatalf("error %q does not name the timeout %q and the rule it broke", msg, timeout)
 			}
 		})
+	}
+}
+
+// A free-form root inputSchema would let undeclared top-level keys pass
+// validation, and buildArgv reads only bound properties — so the extras would
+// be silently dropped. The root must stay closed; free-form objects are
+// allowed at nested levels.
+func TestRootFreeFormInputSchemaIsRejectedAtLoad(t *testing.T) {
+	m := fmt.Sprintf(`{"version":1,"tools":{"t":{
+		"description":"free-form root","command":[%s,"-test.run=TestHelperProcess","--"],
+		"inputSchema":{"type":"object","properties":{"args":{"type":"object","properties":{},"additionalProperties":true}},"additionalProperties":true}
+	}}}`, js(helperBin(t)))
+	p := filepath.Join(t.TempDir(), "tools.json")
+	if err := os.WriteFile(p, []byte(m), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := Load(p)
+	var de *DefinitionError
+	if !errors.As(err, &de) {
+		t.Fatalf("Load = %T (%v), want *DefinitionError", err, err)
+	}
+	var ce *schema.CompileError
+	if !errors.As(de.Err, &ce) {
+		t.Fatalf("wrapped error = %T (%v), want *schema.CompileError", de.Err, de.Err)
+	}
+	for _, iss := range ce.Issues {
+		if iss.Code == "freeFormRoot" && iss.Path == "/additionalProperties" {
+			return
+		}
+	}
+	t.Fatalf("expected a freeFormRoot issue at /additionalProperties, got %+v", ce.Issues)
+}
+
+// The PR's purpose: a nested free-form object (e.g. an args object) still
+// loads fine when the root stays closed.
+func TestNestedFreeFormInputSchemaLoads(t *testing.T) {
+	m := fmt.Sprintf(`{"version":1,"tools":{"t":{
+		"description":"nested free-form","command":[%s,"-test.run=TestHelperProcess","--"],
+		"inputSchema":{"type":"object","properties":{"args":{"type":"object","properties":{},"additionalProperties":true}},"additionalProperties":false},
+		"bindings":[{"property":"args","style":"equals","flag":"--args"}]
+	}}}`, js(helperBin(t)))
+	p := filepath.Join(t.TempDir(), "tools.json")
+	if err := os.WriteFile(p, []byte(m), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(p); err != nil {
+		t.Fatalf("Load = %v, want success", err)
 	}
 }
 
