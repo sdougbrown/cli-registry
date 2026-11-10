@@ -146,6 +146,12 @@ func (r *Registry) compileTool(doc *manifest.Document, name string) error {
 	if err != nil {
 		return fmt.Errorf("compile inputSchema: %w", err)
 	}
+	// The root must stay closed: bindings key argv conversion off
+	// top-level properties, so a free-form root would let undeclared keys
+	// pass validation and be silently dropped from argv.
+	if ap, ok := def.InputSchema["additionalProperties"].(bool); ok && ap {
+		return errors.New("root inputSchema must declare additionalProperties: false (free-form objects are allowed only at nested levels)")
+	}
 	t.schema = vs
 	t.inputSchemaRaw = def.InputSchema
 

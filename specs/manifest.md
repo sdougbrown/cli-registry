@@ -35,7 +35,8 @@ Each tool:
 Exactly **one** root `inputSchema` per tool. It may contain local `$defs` and
 `#/$defs/...` references; every object level declares `additionalProperties` —
 `false` (closed) or `true` (free-form: any keys allowed, declared properties
-still validated when present).
+still validated when present) — but the root inputSchema must be `false`,
+since bindings key argv conversion off top-level properties.
 
 Supported vocabulary is exactly the umpire-json-schema profile v1 subset:
 
