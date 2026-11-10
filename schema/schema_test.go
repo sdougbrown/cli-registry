@@ -98,6 +98,28 @@ func TestObjectRequiresAdditionalPropertiesFalse(t *testing.T) {
 	}
 }
 
+// TestAFreeFormObjectTakesAnyKeys covers the explicit permissive
+// declaration: additionalProperties: true takes any keys, keeps the
+// required and the declared properties' checks, and is the only way a
+// silence used to fail that now passes.
+func TestAFreeFormObjectTakesAnyKeys(t *testing.T) {
+	vs := mustCompileOK(t, map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"args": map[string]any{"type": "object", "properties": map[string]any{}, "additionalProperties": false},
+		},
+		"required":             []any{"args"},
+		"additionalProperties": true,
+	})
+	// Unknown keys pass, the declared property's own schema holds, and
+	// the required is still required.
+	if issues := vs.Validate(map[string]any{"args": map[string]any{}, "anything": map[string]any{"deep": true}}); len(issues) != 0 {
+		t.Errorf("the free-form call is refused: %v", issues)
+	}
+	assertIssue(t, vs, map[string]any{"args": map[string]any{"nope": 1}}, "additionalProperties", "/args/nope")
+	assertIssue(t, vs, map[string]any{}, "required", "/args")
+}
+
 func TestBasicTypesAndConstraints(t *testing.T) {
 	vs := mustCompileOK(t, map[string]any{
 		"type": "object",

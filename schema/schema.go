@@ -127,6 +127,7 @@ type node struct {
 
 	properties map[string]*node
 	required   []string
+	freeForm   bool // additionalProperties: true: any keys, properties unenforced
 
 	discKey  string // tagged oneOf discriminator property
 	branches []*node
@@ -234,8 +235,17 @@ func compileNode(raw any, defs map[string]any, visiting map[string]bool, spath s
 		n.maxItems = intFrom(m, "maxItems", &issues, spath)
 	case kindObject:
 		if addl, ok := m["additionalProperties"]; ok {
-			if b, ok := addl.(bool); !ok || b {
-				issues = append(issues, DefinitionIssue{Code: "unsupportedKeyword", Path: joink(spath, "additionalProperties"), Message: "must be additionalProperties: false"})
+			b, isBool := addl.(bool)
+			switch {
+			case !isBool:
+				issues = append(issues, DefinitionIssue{Code: "unsupportedKeyword", Path: joink(spath, "additionalProperties"), Message: "must be additionalProperties: false or true"})
+			case b:
+				// additionalProperties: true is the one permissive
+				// declaration: the object takes any keys, and its
+				// properties are guidance the validator does not enforce.
+				// A schema that needs the freedom says so; silence still
+				// fails.
+				n.freeForm = true
 			}
 		} else {
 			issues = append(issues, DefinitionIssue{Code: "unsupportedKeyword", Path: joink(spath, "additionalProperties"), Message: "object must declare additionalProperties: false"})
@@ -411,6 +421,14 @@ func validateNode(n *node, value any, path string, issues *[]StructuralIssue) {
 			if _, present := obj[r]; !present {
 				*issues = append(*issues, StructuralIssue{Source: "json-schema", Code: "required", Path: join(path, escape(r))})
 			}
+		}
+		if n.freeForm {
+			for k, ps := range n.properties {
+				if v, present := obj[k]; present {
+					validateNode(ps, v, join(path, escape(k)), issues)
+				}
+			}
+			return
 		}
 		for k := range obj {
 			if _, known := n.properties[k]; !known {
