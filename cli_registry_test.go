@@ -13,6 +13,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/sdougbrown/cli-registry/schema"
 )
 
 // TestHelperProcess is re-invoked by cli-registry as a fake CLI. When
@@ -344,9 +346,16 @@ func TestRootFreeFormInputSchemaIsRejectedAtLoad(t *testing.T) {
 	if !errors.As(err, &de) {
 		t.Fatalf("Load = %T (%v), want *DefinitionError", err, err)
 	}
-	if msg := err.Error(); !strings.Contains(msg, "root inputSchema must declare additionalProperties: false") {
-		t.Fatalf("error %q does not name the rule it broke", msg)
+	var ce *schema.CompileError
+	if !errors.As(de.Err, &ce) {
+		t.Fatalf("wrapped error = %T (%v), want *schema.CompileError", de.Err, de.Err)
 	}
+	for _, iss := range ce.Issues {
+		if iss.Code == "freeFormRoot" && iss.Path == "/additionalProperties" {
+			return
+		}
+	}
+	t.Fatalf("expected a freeFormRoot issue at /additionalProperties, got %+v", ce.Issues)
 }
 
 // The PR's purpose: a nested free-form object (e.g. an args object) still

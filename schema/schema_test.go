@@ -86,16 +86,13 @@ func TestRejectAnyOfPatternFormat(t *testing.T) {
 	}
 }
 
-func TestObjectRequiresAdditionalPropertiesFalse(t *testing.T) {
+func TestObjectRequiresAdditionalPropertiesDeclaration(t *testing.T) {
 	raw := map[string]any{"type": "object", "properties": map[string]any{"a": map[string]any{"type": "string"}}}
 	_, err := Compile(raw)
 	if err == nil {
-		t.Fatal("expected rejection for object without additionalProperties:false")
+		t.Fatal("expected rejection for object without an additionalProperties declaration")
 	}
-	var ce *CompileError
-	if !errors.As(err, &ce) || len(ce.Issues) == 0 {
-		t.Fatalf("expected definition issues, got %v", err)
-	}
+	findCode(t, err, "unsupportedKeyword")
 }
 
 // TestAFreeFormObjectTakesAnyKeys covers the explicit permissive
