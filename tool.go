@@ -60,6 +60,7 @@ type cwdScope struct {
 
 // toolDef is the typed tool body used for DisallowUnknownFields decoding.
 type toolDef struct {
+	Name        string            `json:"name"`
 	Description string            `json:"description"`
 	Command     []string          `json:"command"`
 	Env         map[string]string `json:"env"`
@@ -92,7 +93,7 @@ func (r *Registry) compileTool(doc *manifest.Document, name string) error {
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&def); err != nil {
-		return fmt.Errorf("manifest %s: decode tool body: %w", doc.ToolSource[name], err)
+		return fmt.Errorf("decode tool body: %w", err)
 	}
 
 	t := &tool{
@@ -100,6 +101,13 @@ func (r *Registry) compileTool(doc *manifest.Document, name string) error {
 		description: def.Description,
 		env:         def.Env,
 		output:      outputConfig{mode: "raw", successExitCodes: map[int]bool{0: true}},
+	}
+
+	// The spec derives a tool's name from its key, but it lists "name" as a
+	// field, so a body may carry it redundantly; a value that names another
+	// tool is an error, not a rename.
+	if def.Name != "" && def.Name != name {
+		return fmt.Errorf("body declares name %q but the tool's key is %q", def.Name, name)
 	}
 
 	if t.description == "" {

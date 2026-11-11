@@ -15,7 +15,11 @@ All notable changes to this project are recorded here. The format follows
   decoding in line with the manifest spec, which already mandates
   `DisallowUnknownFields` at ingest, and with the envelope's own strict
   decode. Manifests that load today with a misspelled key will stop loading;
-  the error names the key to fix.
+  the error names the key to fix. The spec's derived `name` field is accepted
+  when it matches the tool's key, and a mismatch fails the load naming both.
+- `DefinitionError` carries the manifest file the tool was defined in, so
+  every tool-body compile failure in a multi-file load names the file to fix,
+  not only the unknown-key rejection.
 
 ## v0.1.1 — 2026-10-23
 

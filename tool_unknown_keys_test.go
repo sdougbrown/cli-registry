@@ -139,6 +139,43 @@ func TestUnknownToolKeyErrorNamesTheManifestFile(t *testing.T) {
 	}
 }
 
+// The spec derives a tool's name from its key but lists "name" as a field, so
+// a body may carry it redundantly. A matching name loads; a name that points
+// at another tool fails the load naming both spellings.
+func TestExplicitToolNameMustMatchItsKey(t *testing.T) {
+	for _, tt := range []struct {
+		name, body string
+		wantErr    string
+	}{
+		{"matching", `"name":"t","description":"d","command":["echo"],"timeout":"1s","bindings":[]`, ``},
+		{"mismatched", `"name":"other","description":"d","command":["echo"],"timeout":"1s","bindings":[]`, `"other"`},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			m := `{"version":1,"tools":{"t":{` + tt.body + `,
+				"inputSchema":{"type":"object","properties":{},"additionalProperties":false}
+			}}}`
+			p := filepath.Join(t.TempDir(), "tools.json")
+			if err := os.WriteFile(p, []byte(m), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			_, err := Load(p)
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Fatalf("Load = %v, want success", err)
+				}
+				return
+			}
+			var de *DefinitionError
+			if !errors.As(err, &de) {
+				t.Fatalf("Load = %T (%v), want *DefinitionError", err, err)
+			}
+			if msg := err.Error(); !strings.Contains(msg, tt.wantErr) || !strings.Contains(msg, `"t"`) {
+				t.Fatalf("error %q does not name the declared name and the key", msg)
+			}
+		})
+	}
+}
+
 // A well-formed tool body still loads with every supported key present, so
 // the strict decode adds no false rejections.
 func TestKnownToolKeysStillLoad(t *testing.T) {
