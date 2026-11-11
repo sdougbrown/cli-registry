@@ -1,6 +1,7 @@
 package cliregistry
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -84,8 +85,14 @@ type toolDef struct {
 func (r *Registry) compileTool(doc *manifest.Document, name string) error {
 	raw := doc.Tools[name]
 	var def toolDef
-	if err := json.Unmarshal(raw, &def); err != nil {
-		return fmt.Errorf("decode tool body: %w", err)
+	// The body arrives null-stripped and duplicate-free from manifest.Decode,
+	// which hands tool bodies to later stages as raw JSON. The strict decode
+	// here is that stage's own decoding: a typo'd key must fail the load, not
+	// silently drop the configuration it carried.
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&def); err != nil {
+		return fmt.Errorf("manifest %s: decode tool body: %w", doc.ToolSource[name], err)
 	}
 
 	t := &tool{
