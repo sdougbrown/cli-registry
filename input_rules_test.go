@@ -239,6 +239,133 @@ func TestInputRulesInvocationWideEnabledWhen(t *testing.T) {
 	}
 }
 
+func TestInputRulesFieldlessSubjectForms(t *testing.T) {
+	// Only an absent `field` and an empty string are fieldless: both gate the
+	// whole invocation. A null member is stripped by manifest normalization
+	// before the tool body is decoded, so it reaches the compiler as absent and
+	// behaves the same way.
+	const reason = "one source is required"
+	cases := []struct {
+		name    string
+		rule    map[string]any
+		wantErr []StructuralIssue
+	}{
+		{
+			name: "omitted field",
+			rule: map[string]any{
+				"type": "requires", "reason": reason,
+				"when": map[string]any{"op": "truthy", "field": "a"},
+			},
+			wantErr: []StructuralIssue{wantInputRuleIssue("", reason)},
+		},
+		{
+			name: "empty string field",
+			rule: map[string]any{
+				"type": "requires", "field": "", "reason": reason,
+				"when": map[string]any{"op": "truthy", "field": "a"},
+			},
+			wantErr: []StructuralIssue{wantInputRuleIssue("", reason)},
+		},
+		{
+			name: "null field",
+			rule: map[string]any{
+				"type": "requires", "field": nil, "reason": reason,
+				"when": map[string]any{"op": "truthy", "field": "a"},
+			},
+			wantErr: []StructuralIssue{wantInputRuleIssue("", reason)},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			reg := loadInputRules(t, stringProps("a"), []any{tc.rule})
+			tool, _ := reg.Lookup("tool")
+			_, err := reg.Plan(tool, map[string]any{})
+			wantValidationIssues(t, err, tc.wantErr)
+			if _, err := reg.Plan(tool, map[string]any{"a": "x"}); err != nil {
+				t.Errorf("Plan with a satisfied fieldless rule: %v", err)
+			}
+		})
+	}
+}
+
+func TestInputRulesRejectNonStringSubjectAtLoad(t *testing.T) {
+	// A requires/enabledWhen subject must be a string. A malformed subject is
+	// not an absent one: overwriting it with the invocation field would silently
+	// widen a property gate to every invocation, so the load fails instead.
+	when := map[string]any{"op": "present", "field": "a"}
+	cases := []struct {
+		name  string
+		props map[string]any
+		rules []any
+	}{
+		{
+			name:  "requires with a numeric field",
+			props: stringProps("a"),
+			rules: []any{map[string]any{"type": "requires", "field": 42, "when": when}},
+		},
+		{
+			name:  "requires with a boolean field",
+			props: stringProps("a"),
+			rules: []any{map[string]any{"type": "requires", "field": false, "when": when}},
+		},
+		{
+			name:  "requires with an object field",
+			props: stringProps("a"),
+			rules: []any{map[string]any{
+				"type": "requires", "field": map[string]any{"property": "a"}, "when": when,
+			}},
+		},
+		{
+			name:  "requires with an array field",
+			props: stringProps("a"),
+			rules: []any{map[string]any{"type": "requires", "field": []any{"a"}, "when": when}},
+		},
+		{
+			name:  "enabledWhen with a numeric field",
+			props: stringProps("a"),
+			rules: []any{map[string]any{"type": "enabledWhen", "field": 3.5, "when": when}},
+		},
+		{
+			name:  "enabledWhen with a boolean field",
+			props: stringProps("a"),
+			rules: []any{map[string]any{"type": "enabledWhen", "field": true, "when": when}},
+		},
+		{
+			name:  "anyOf operand with a numeric field",
+			props: stringProps("a"),
+			rules: []any{map[string]any{"type": "anyOf", "rules": []any{
+				map[string]any{"type": "requires", "field": 7, "when": when},
+			}}},
+		},
+		{
+			name:  "eitherOf operand with a boolean field",
+			props: stringProps("a"),
+			rules: []any{map[string]any{
+				"type": "eitherOf", "group": "g",
+				"branches": map[string]any{"only": []any{
+					map[string]any{"type": "enabledWhen", "field": true, "when": when},
+				}},
+			}},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			path, _ := inputRulesManifest(t, tc.props, tc.rules)
+			_, err := Load(path)
+			if err == nil {
+				t.Fatal("expected a load failure for a non-string rule subject")
+			}
+			if !strings.Contains(err.Error(), "must be a string") {
+				t.Errorf("error %q does not report the malformed subject", err)
+			}
+			var de *DefinitionError
+			if !errors.As(err, &de) || de.Tool != "tool" {
+				t.Errorf("error = %v (%T), want a DefinitionError naming the tool", err, err)
+			}
+		})
+	}
+}
+
 func TestInputRulesBlockBeforeAnythingIsBuilt(t *testing.T) {
 	// A rule violation is a caller error raised after the input schema and
 	// before argv: Call never spawns, and a host that plans the call itself

@@ -72,7 +72,9 @@ whole load.
 - A `requires` or `enabledWhen` rule with no `field` constrains the whole
   invocation. It is evaluated on every call, including one that supplies no
   properties. Values are evaluated as the caller supplied them; manifests
-  define no defaults.
+  define no defaults. An omitted `field`, an empty string, and `null` (stripped
+  by normalization) all mean no field; any other non-string `field` fails the
+  load rather than being read as absent.
 - Rules are evaluated after the `inputSchema` and before argv is built, so
   `Call` never spawns and `Plan` fails at plan time.
 - A violation is a `*ValidationError` carrying one `StructuralIssue` per failing

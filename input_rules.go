@@ -114,7 +114,12 @@ func narrowInputRule(raw any) (bool, error) {
 				return false, fmt.Errorf(`"requires" must use "when" with a property expression; input rules do not read dependencies`)
 			}
 		}
-		if field, _ := rule["field"].(string); field == "" {
+		// Only an absent subject and an empty string are fieldless: a null
+		// member is already stripped by manifest normalization. Any other
+		// value is left as declared so the Umpire schema rejects it; pinning
+		// it here would silently widen a property gate to the invocation.
+		field, isString := rule["field"].(string)
+		if _, declared := rule["field"]; !declared || (isString && field == "") {
 			rule["field"] = inputRuleInvocationField
 			pinned = true
 		}
