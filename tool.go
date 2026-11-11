@@ -1,6 +1,7 @@
 package cliregistry
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -59,6 +60,7 @@ type cwdScope struct {
 
 // toolDef is the typed tool body used for DisallowUnknownFields decoding.
 type toolDef struct {
+	Name        string            `json:"name"`
 	Description string            `json:"description"`
 	Command     []string          `json:"command"`
 	Env         map[string]string `json:"env"`
@@ -84,7 +86,13 @@ type toolDef struct {
 func (r *Registry) compileTool(doc *manifest.Document, name string) error {
 	raw := doc.Tools[name]
 	var def toolDef
-	if err := json.Unmarshal(raw, &def); err != nil {
+	// The manifest loader hands tool bodies here as raw JSON, already
+	// null-stripped and duplicate-free. The strict decode belongs to this
+	// stage: a misspelled key must fail the load, not silently drop the
+	// configuration it carried.
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&def); err != nil {
 		return fmt.Errorf("decode tool body: %w", err)
 	}
 
@@ -93,6 +101,13 @@ func (r *Registry) compileTool(doc *manifest.Document, name string) error {
 		description: def.Description,
 		env:         def.Env,
 		output:      outputConfig{mode: "raw", successExitCodes: map[int]bool{0: true}},
+	}
+
+	// The spec derives a tool's name from its key, but it lists "name" as a
+	// field, so a body may carry it redundantly; a value that names another
+	// tool is an error, not a rename.
+	if def.Name != "" && def.Name != name {
+		return fmt.Errorf("body declares name %q but the tool's key is %q", def.Name, name)
 	}
 
 	if t.description == "" {

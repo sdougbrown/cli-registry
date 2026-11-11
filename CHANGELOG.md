@@ -4,6 +4,23 @@ All notable changes to this project are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [semantic versioning](https://semver.org/).
 
+## Unreleased
+
+### Changed
+
+- **Breaking:** unknown keys in a tool body now fail the load (a
+  `*DefinitionError` naming the key, the tool, and the manifest file) instead
+  of being silently discarded. A typo such as `inputRule` for `inputRules`
+  used to drop the whole configuration the key carried. This brings tool-body
+  decoding in line with the manifest spec, which already mandates
+  `DisallowUnknownFields` at ingest, and with the envelope's own strict
+  decode. Manifests that load today with a misspelled key will stop loading;
+  the error names the key to fix. The spec's derived `name` field is accepted
+  when it matches the tool's key, and a mismatch fails the load naming both.
+- `DefinitionError` carries the manifest file the tool was defined in, so
+  every tool-body compile failure in a multi-file load names the file to fix,
+  not only the unknown-key rejection.
+
 ## v0.1.1 — 2026-10-23
 
 Lets a host run a registered CLI through its own executor instead of the

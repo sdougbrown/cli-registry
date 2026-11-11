@@ -37,11 +37,17 @@ func (e *LoadError) Unwrap() error { return e.Err }
 // vocabulary, bad argv bindings, or an unresolvable command path.
 type DefinitionError struct {
 	Tool string
-	Err  error
+	// Source is the manifest file the tool was defined in, when the loader
+	// knows it, so a failure in a multi-file load names where to fix it.
+	Source string
+	Err    error
 }
 
 func (e *DefinitionError) Error() string {
-	return fmt.Sprintf("tool %q definition: %v", e.Tool, e.Err)
+	if e.Source == "" {
+		return fmt.Sprintf("tool %q definition: %v", e.Tool, e.Err)
+	}
+	return fmt.Sprintf("tool %q definition in %s: %v", e.Tool, e.Source, e.Err)
 }
 func (e *DefinitionError) Unwrap() error { return e.Err }
 
@@ -138,7 +144,7 @@ func Load(paths ...string) (*Registry, error) {
 	r := &Registry{tools: map[string]*tool{}}
 	for name := range doc.Tools {
 		if err := r.compileTool(doc, name); err != nil {
-			return nil, &DefinitionError{Tool: name, Err: err}
+			return nil, &DefinitionError{Tool: name, Source: doc.ToolSource[name], Err: err}
 		}
 	}
 	for name := range r.tools {
