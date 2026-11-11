@@ -979,6 +979,41 @@ func TestInputRulesAcceptTheProducerWire(t *testing.T) {
 	}
 }
 
+func TestInputRulesEmptyReasonStillExplainsRejection(t *testing.T) {
+	// Umpire accepts an explicitly empty reason and reports it as an empty
+	// status reason, while an absent reason gets Umpire's default. The issue
+	// must still explain the rejection, not carry the empty string through to
+	// the host.
+	reg := loadInputRules(t, stringProps("file", "entry"), []any{
+		map[string]any{
+			"type": "requires", "field": "file",
+			"when":   map[string]any{"op": "present", "field": "entry"},
+			"reason": "",
+		},
+	})
+	tool, ok := reg.Lookup("tool")
+	if !ok {
+		t.Fatal("lookup: tool not found")
+	}
+
+	_, err := reg.Plan(tool, map[string]any{"file": "r.json"})
+	var ve *ValidationError
+	if !errors.As(err, &ve) {
+		t.Fatalf("Plan error = %v (%T), want *ValidationError", err, err)
+	}
+	if len(ve.Issues) != 1 {
+		t.Fatalf("issues = %#v, want one input-rule issue", ve.Issues)
+	}
+	issue := ve.Issues[0]
+	if issue.Source != "input-rules" || issue.Code != "inputRule" || issue.Path != "/file" {
+		t.Fatalf("issue = %#v, want an input-rule issue on /file", issue)
+	}
+	message := strings.TrimSpace(issue.Message)
+	if message == "" || message == issue.Code || message == issue.Path {
+		t.Errorf("issue message = %q, want a nonempty explanation", issue.Message)
+	}
+}
+
 func TestInputRulesFollowSchemaValidation(t *testing.T) {
 	// A value that fails the input schema is reported as a schema issue only:
 	// the rules run after the schema, never instead of it.
