@@ -39,8 +39,8 @@ type inputRules struct {
 
 // compileInputRules builds the Umpire engine from the declared rules, with one
 // field per top-level property. The input wire is a strict subset of Umpire v1
-// (see validateInputRuleShape); Umpire validates the rest of the contract,
-// including unknown properties, malformed expressions, and composites.
+// (see validateInputRuleShape). Umpire validates the rest of the contract:
+// unknown properties, malformed expressions, and composites.
 func compileInputRules(raw json.RawMessage, props map[string]any) (*inputRules, error) {
 	var rules []any
 	if len(raw) == 0 {

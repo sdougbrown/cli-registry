@@ -110,13 +110,13 @@
 //
 // A tool may declare inputRules: Umpire rules over its own top-level
 // properties, compiled once at load. A rule that names a property gates the
-// value the caller supplied for it, so an omitted property is never a
-// violation; a requires or enabledWhen rule with no field constrains the whole
-// invocation and runs even when nothing is supplied. Rules are evaluated after
-// the input schema and before argv is built, so Plan (and therefore Call)
-// returns a *ValidationError with Source "input-rules", Code "inputRule", a
-// Path naming the failing property (empty for an invocation-wide rule), and
-// the rule's reason as the Message.
+// value the caller supplied, so an omitted property is never a violation. A
+// requires or enabledWhen rule with no field constrains the whole invocation.
+// It runs even when nothing is supplied. Rules are evaluated after the input
+// schema and before argv is built, so Plan (and therefore Call) returns a
+// *ValidationError. Its Source is "input-rules", Code "inputRule", Path names
+// the failing property (empty for an invocation-wide rule), and Message is the
+// rule's reason.
 //
 // # Process lifecycle (Call's engine)
 //

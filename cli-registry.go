@@ -46,9 +46,10 @@ func (e *DefinitionError) Error() string {
 func (e *DefinitionError) Unwrap() error { return e.Err }
 
 // ValidationError indicates the call args were refused before anything was
-// built: they failed the tool's input schema, a declared input rule rejects
-// them, or a value a binding would emit as a separate argv element would be
-// read by the command as an option. No process was spawned.
+// built. The args failed the tool's input schema, or a declared input rule
+// rejects them. The same refusal applies to a value a binding would emit as
+// a separate argv element, which the command would read as an option. No
+// process was spawned.
 type ValidationError struct {
 	Tool   string
 	Issues []StructuralIssue
