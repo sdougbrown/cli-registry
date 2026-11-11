@@ -39,8 +39,8 @@ type inputRules struct {
 
 // compileInputRules builds the Umpire engine from the declared rules, with one
 // field per top-level property. The input wire is a strict subset of Umpire v1
-// (see validateInputRuleShape). Umpire validates the rest of the contract:
-// unknown properties, malformed expressions, and composites.
+// (see narrowInputRule). Umpire validates the rest of the contract: unknown
+// properties, malformed expressions, and composite shapes.
 func compileInputRules(raw json.RawMessage, props map[string]any) (*inputRules, error) {
 	var rules []any
 	if len(raw) == 0 {
@@ -58,12 +58,14 @@ func compileInputRules(raw json.RawMessage, props map[string]any) (*inputRules, 
 			inputRuleInvocationField,
 		)
 	}
+	pinned := false
 	for i, rule := range rules {
-		if err := validateInputRuleShape(rule); err != nil {
+		rulePinned, err := narrowInputRule(rule)
+		if err != nil {
 			return nil, fmt.Errorf("input rule %d: %w", i, err)
 		}
+		pinned = rulePinned || pinned
 	}
-	pinned := pinInvocationRules(rules)
 
 	fields := make(map[string]any, len(props)+1)
 	for name := range props {
@@ -87,86 +89,62 @@ func compileInputRules(raw json.RawMessage, props map[string]any) (*inputRules, 
 	return &inputRules{engine: engine}, nil
 }
 
-// validateInputRuleShape narrows the rule vocabulary before hydration.
-func validateInputRuleShape(raw any) error {
+// narrowInputRule validates the input dialect and pins fieldless gates to the
+// invocation field. It reports whether the rule or its operands needed a pin.
+func narrowInputRule(raw any) (bool, error) {
 	rule, ok := raw.(map[string]any)
 	if !ok {
-		return fmt.Errorf("rule must be an object, got %T", raw)
+		return false, fmt.Errorf("rule must be an object, got %T", raw)
 	}
+	pinned := false
 	ruleType, _ := rule["type"].(string)
 	if !inputRuleTypes[ruleType] {
-		return fmt.Errorf(
+		return false, fmt.Errorf(
 			"rule type %q is not an input rule; input rules gate a property or the invocation",
 			ruleType,
 		)
 	}
 	switch ruleType {
-	case "requires":
-		if _, has := rule["dependency"]; has {
-			return fmt.Errorf(`"requires" must use "when" with a property expression; input rules do not read dependencies`)
+	case "requires", "enabledWhen":
+		if ruleType == "requires" {
+			if _, has := rule["dependency"]; has {
+				return false, fmt.Errorf(`"requires" must use "when" with a property expression; input rules do not read dependencies`)
+			}
+			if _, has := rule["dependencies"]; has {
+				return false, fmt.Errorf(`"requires" must use "when" with a property expression; input rules do not read dependencies`)
+			}
 		}
-		if _, has := rule["dependencies"]; has {
-			return fmt.Errorf(`"requires" must use "when" with a property expression; input rules do not read dependencies`)
+		if field, _ := rule["field"].(string); field == "" {
+			rule["field"] = inputRuleInvocationField
+			pinned = true
 		}
 	case "disables":
 		if _, has := rule["source"]; has {
-			return fmt.Errorf(`"disables" must use "when" with a property expression; input rules do not read a source property`)
+			return false, fmt.Errorf(`"disables" must use "when" with a property expression; input rules do not read a source property`)
 		}
 	}
 	if inner, ok := rule["rules"].([]any); ok {
 		for i, operand := range inner {
-			if err := validateInputRuleShape(operand); err != nil {
-				return fmt.Errorf("anyOf rule %d: %w", i, err)
+			operandPinned, err := narrowInputRule(operand)
+			if err != nil {
+				return false, fmt.Errorf("anyOf rule %d: %w", i, err)
 			}
+			pinned = operandPinned || pinned
 		}
 	}
 	if branches, ok := rule["branches"].(map[string]any); ok {
 		for _, name := range slices.Sorted(maps.Keys(branches)) {
 			branch, _ := branches[name].([]any)
 			for i, operand := range branch {
-				if err := validateInputRuleShape(operand); err != nil {
-					return fmt.Errorf("eitherOf branch %q rule %d: %w", name, i, err)
+				operandPinned, err := narrowInputRule(operand)
+				if err != nil {
+					return false, fmt.Errorf("eitherOf branch %q rule %d: %w", name, i, err)
 				}
+				pinned = operandPinned || pinned
 			}
 		}
 	}
-	return nil
-}
-
-// pinInvocationRules gives every fieldless gate rule the internal invocation
-// field, recursing through composite operands, and reports whether any rule
-// needed it.
-func pinInvocationRules(rules []any) bool {
-	pinned := false
-	for _, rule := range rules {
-		pinned = pinInvocationRule(rule) || pinned
-	}
-	return pinned
-}
-
-func pinInvocationRule(raw any) bool {
-	rule, _ := raw.(map[string]any)
-	if rule == nil {
-		return false
-	}
-	pinned := false
-	switch rule["type"] {
-	case "requires", "enabledWhen":
-		if field, _ := rule["field"].(string); field == "" {
-			rule["field"] = inputRuleInvocationField
-			pinned = true
-		}
-	}
-	if inner, ok := rule["rules"].([]any); ok {
-		pinned = pinInvocationRules(inner) || pinned
-	}
-	if branches, ok := rule["branches"].(map[string]any); ok {
-		for _, name := range slices.Sorted(maps.Keys(branches)) {
-			branch, _ := branches[name].([]any)
-			pinned = pinInvocationRules(branch) || pinned
-		}
-	}
-	return pinned
+	return pinned, nil
 }
 
 // inputRuleIssues evaluates the rules against the supplied args: the

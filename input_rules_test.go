@@ -556,6 +556,17 @@ func TestInputRulesRejectInvalidRulesAtLoad(t *testing.T) {
 			wantErr: `must use "when"`,
 		},
 		{
+			// Umpire's plural form (a non-empty list of field names or
+			// expressions) is a different spelling of the same field-dependency
+			// contract, so the dialect refuses it too.
+			name:  "requires with field dependencies",
+			props: stringProps("a", "b"),
+			rules: []any{map[string]any{
+				"type": "requires", "field": "a", "dependencies": []any{"b"},
+			}},
+			wantErr: `must use "when"`,
+		},
+		{
 			name:  "disables with a field source",
 			props: stringProps("a", "b"),
 			rules: []any{map[string]any{
