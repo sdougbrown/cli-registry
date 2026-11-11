@@ -85,10 +85,10 @@ type toolDef struct {
 func (r *Registry) compileTool(doc *manifest.Document, name string) error {
 	raw := doc.Tools[name]
 	var def toolDef
-	// The body arrives null-stripped and duplicate-free from manifest.Decode,
-	// which hands tool bodies to later stages as raw JSON. The strict decode
-	// here is that stage's own decoding: a typo'd key must fail the load, not
-	// silently drop the configuration it carried.
+	// The manifest loader hands tool bodies here as raw JSON, already
+	// null-stripped and duplicate-free. The strict decode belongs to this
+	// stage: a misspelled key must fail the load, not silently drop the
+	// configuration it carried.
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&def); err != nil {
