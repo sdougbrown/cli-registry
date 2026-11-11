@@ -106,6 +106,18 @@
 //
 // A Plan comes from Registry.Plan; the zero value is not usable.
 //
+// # Input rules
+//
+// A tool may declare inputRules: Umpire rules over its own top-level
+// properties, compiled once at load. A rule that names a property gates the
+// value the caller supplied for it, so an omitted property is never a
+// violation; a requires or enabledWhen rule with no field constrains the whole
+// invocation and runs even when nothing is supplied. Rules are evaluated after
+// the input schema and before argv is built, so Plan (and therefore Call)
+// returns a *ValidationError with Source "input-rules", Code "inputRule", a
+// Path naming the failing property (empty for an invocation-wide rule), and
+// the rule's reason as the Message.
+//
 // # Process lifecycle (Call's engine)
 //
 //   - The child runs in its own process group with stdin supplied from the plan
@@ -142,8 +154,9 @@
 //	LoadError        — registry load / duplicate tool name
 //	DefinitionError  — schema or argv binding that fails compilation
 //	ValidationError  — args were refused before anything was built: they fail
-//	                   the input schema, or a value a binding would emit as a
-//	                   separate argv element would be read as an option
+//	                   the input schema, a declared input rule rejects them,
+//	                   or a value a binding would emit as a separate argv
+//	                   element would be read as an option
 //	                   (carries []StructuralIssue)
 //	ExecError        — process ran but exited outside success_exit_codes;
 //	                   carries Stdout, Stderr and Truncated
@@ -155,7 +168,7 @@
 //	                   deprecated alias).
 //
 //	type StructuralIssue struct {
-//	    Source string // "json-schema", or "argv-binding" for the argv contract
+//	    Source string // "json-schema", "input-rules", or "argv-binding"
 //	    Code   string
 //	    Path   string // RFC 6901 pointer
 //	}

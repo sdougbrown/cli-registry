@@ -46,9 +46,9 @@ func (e *DefinitionError) Error() string {
 func (e *DefinitionError) Unwrap() error { return e.Err }
 
 // ValidationError indicates the call args were refused before anything was
-// built: they failed the tool's input schema, or a value a binding would emit
-// as a separate argv element would be read by the command as an option. No
-// process was spawned.
+// built: they failed the tool's input schema, a declared input rule rejects
+// them, or a value a binding would emit as a separate argv element would be
+// read by the command as an option. No process was spawned.
 type ValidationError struct {
 	Tool   string
 	Issues []StructuralIssue
@@ -177,9 +177,9 @@ func (r *Registry) Lookup(name string) (Tool, bool) {
 	return Tool{Name: t.name, Description: t.description, InputSchema: t.inputSchemaRaw}, true
 }
 
-// Call validates args against tool's schema, builds argv, spawns the command,
-// and returns the decoded result. Args that fail validation return a
-// *ValidationError before any process is spawned.
+// Call validates args against tool's schema and input rules, builds argv,
+// spawns the command, and returns the decoded result. Args that fail
+// validation return a *ValidationError before any process is spawned.
 //
 // Call is Plan plus the library's own exec: a host that runs commands itself
 // uses Plan and Finish instead, and sees the same classification.

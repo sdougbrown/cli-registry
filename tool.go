@@ -36,6 +36,7 @@ type tool struct {
 	inputSchemaRaw map[string]any
 	required       []string
 	bindings       []binding
+	inputRules     *inputRules
 }
 
 type binding struct {
@@ -65,8 +66,9 @@ type toolDef struct {
 		Mode  string   `json:"mode"`
 		Roots []string `json:"roots"`
 	} `json:"cwd"`
-	Timeout     string         `json:"timeout"`
-	InputSchema map[string]any `json:"inputSchema"`
+	Timeout     string          `json:"timeout"`
+	InputSchema map[string]any  `json:"inputSchema"`
+	InputRules  json.RawMessage `json:"inputRules"`
 	Bindings    []*struct {
 		Property string `json:"property"`
 		Style    string `json:"style"`
@@ -216,6 +218,14 @@ func (r *Registry) compileTool(doc *manifest.Document, name string) error {
 			}
 		}
 	}
+
+	// input rules: compiled once, after the schema and its binding table so
+	// every rule subject is a property the tool declares.
+	rules, err := compileInputRules(def.InputRules, props)
+	if err != nil {
+		return err
+	}
+	t.inputRules = rules
 
 	// cwd scope
 	if def.Cwd != nil {
