@@ -230,6 +230,9 @@ type store struct {
 	// removes exactly what it added.
 	applied     []string
 	fingerprint string
+	// logState is what stderr last said about withheld entries, so a reason
+	// edit is printed even though it changes nothing a client is offered.
+	logState string
 }
 
 func newStore(paths []string, inputs map[string]any, declared map[string]string) *store {
@@ -272,17 +275,32 @@ func (s *store) adopt(reg *cliregistry.Registry) (bool, error) {
 	if err != nil {
 		return false, fmt.Errorf("availability: %w", err)
 	}
+	first := s.reg == nil
 	fp := fingerprint(reg, availability)
-	changed := s.reg == nil || fp != s.fingerprint
+	logged := logState(availability)
+	changed := first || fp != s.fingerprint
+	report := first || logged != s.logState
 	s.mu.Lock()
 	s.reg = reg
 	s.availability = availability
 	s.fingerprint = fp
+	s.logState = logged
 	s.mu.Unlock()
-	if changed {
+	if report {
 		logUnavailable(availability)
 	}
 	return changed, nil
+}
+
+// logState covers what stderr says about withheld entries. It is kept apart
+// from the fingerprint because a reason-only edit changes what an operator
+// reads without changing what a model is offered.
+func logState(availability map[string]cliregistry.ToolAvailability) string {
+	var b strings.Builder
+	for _, name := range unavailableNames(availability) {
+		fmt.Fprintf(&b, "%s\u0000%s\u0000", name, availability[name].Reason)
+	}
+	return b.String()
 }
 
 // fingerprint covers what a client can see: the offered tools and their
@@ -305,6 +323,12 @@ func fingerprint(reg *cliregistry.Registry, availability map[string]cliregistry.
 // logUnavailable reports gated entries on stderr. tools/list has nowhere to
 // carry a reason, so this is where an operator learns why a tool is missing.
 func logUnavailable(availability map[string]cliregistry.ToolAvailability) {
+	for _, name := range unavailableNames(availability) {
+		fmt.Fprintf(os.Stderr, "cli-registry-mcp: %s is unavailable: %s\n", name, availability[name].Reason)
+	}
+}
+
+func unavailableNames(availability map[string]cliregistry.ToolAvailability) []string {
 	var names []string
 	for name, a := range availability {
 		if !a.Available {
@@ -312,9 +336,7 @@ func logUnavailable(availability map[string]cliregistry.ToolAvailability) {
 		}
 	}
 	sort.Strings(names)
-	for _, name := range names {
-		fmt.Fprintf(os.Stderr, "cli-registry-mcp: %s is unavailable: %s\n", name, availability[name].Reason)
-	}
+	return names
 }
 
 // apply replaces the server's tool set with the currently offered tools,
@@ -401,14 +423,19 @@ func errResult(err error) *mcp.CallToolResult {
 func (s *store) watch(srv *mcp.Server) {
 	t := time.NewTicker(2 * time.Second)
 	defer t.Stop()
+	// A manifest edited into an invalid state keeps the last good tool set
+	// serving, and the same refusal would otherwise print every tick.
+	var lastRefusal string
 	for range t.C {
 		changed, err := s.reload()
 		if err != nil {
-			// A manifest edited into an invalid state keeps the last good
-			// tool set serving; say so instead of failing silently.
-			fmt.Fprintln(os.Stderr, "cli-registry-mcp: reload:", err)
+			if refusal := err.Error(); refusal != lastRefusal {
+				fmt.Fprintln(os.Stderr, "cli-registry-mcp: reload:", err)
+				lastRefusal = refusal
+			}
 			continue
 		}
+		lastRefusal = ""
 		if changed {
 			s.apply(srv)
 		}
@@ -442,10 +469,15 @@ func authHandler(next http.Handler, token string) http.Handler {
 }
 
 func allowedHost(host string) bool {
-	// loopback hosts (default bind): strip port
+	// A Host header carries an IPv6 literal in brackets, with or without a
+	// port; a single colon is a port.
 	h := strings.ToLower(host)
-	if i := strings.LastIndex(h, ":"); i >= 0 && !strings.Contains(h[i:], "]") {
-		h = h[:i]
+	if strings.HasPrefix(h, "[") {
+		if end := strings.Index(h, "]"); end >= 0 {
+			h = h[1:end]
+		}
+	} else if strings.Count(h, ":") == 1 {
+		h = h[:strings.LastIndex(h, ":")]
 	}
 	return h == "localhost" || h == "127.0.0.1" || h == "::1"
 }
