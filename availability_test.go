@@ -211,13 +211,13 @@ func TestAvailabilityLoadFailures(t *testing.T) {
 			wantErr: "not an availability rule",
 		},
 		{
-			name: "invalid umpire schema",
+			name: "a condition type no consumer can supply",
 			manifest: `{"version": 1, "tools": {` + validTool + `},
 				"availability": {
 					"conditions": {"a": {"type": "nonsense"}},
 					"rules": []
 				}}`,
-			wantErr: "supported type",
+			wantErr: `has type "nonsense"`,
 		},
 		{
 			name: "disables with a tool source",
