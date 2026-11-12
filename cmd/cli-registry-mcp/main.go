@@ -26,6 +26,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"maps"
 	"net/http"
 	"os"
 	"sort"
@@ -79,9 +80,9 @@ func run(args []string) int {
 		return 1
 	}
 
-	store := newStore(paths, inputs)
-	if _, err := store.reload(); err != nil {
-		fmt.Fprintln(os.Stderr, "cli-registry-mcp: load:", err)
+	store := newStore(paths, inputs, loaded.AvailabilityInputs())
+	if _, err := store.adopt(loaded); err != nil {
+		fmt.Fprintln(os.Stderr, "cli-registry-mcp:", err)
 		return 1
 	}
 
@@ -217,9 +218,12 @@ func declaredConditions(declared map[string]string) string {
 // store holds the current immutable registry and rebinds the MCP tool set when
 // the underlying manifests change.
 type store struct {
-	mu           sync.Mutex
-	paths        []string
-	inputs       map[string]any
+	mu     sync.Mutex
+	paths  []string
+	inputs map[string]any
+	// declared is the condition set the inputs were typed against. A reload
+	// that declares a different one cannot be honoured without new flags.
+	declared     map[string]string
 	reg          *cliregistry.Registry
 	availability map[string]cliregistry.ToolAvailability
 	// applied is the tool set last registered on the server, so a rebind
@@ -228,8 +232,8 @@ type store struct {
 	fingerprint string
 }
 
-func newStore(paths []string, inputs map[string]any) *store {
-	return &store{paths: paths, inputs: inputs}
+func newStore(paths []string, inputs map[string]any, declared map[string]string) *store {
+	return &store{paths: paths, inputs: inputs, declared: declared}
 }
 
 func (s *store) current() (*cliregistry.Registry, map[string]cliregistry.ToolAvailability) {
@@ -238,29 +242,47 @@ func (s *store) current() (*cliregistry.Registry, map[string]cliregistry.ToolAva
 	return s.reg, s.availability
 }
 
-// reload loads the manifests and evaluates availability. It reports whether
-// the offered tool set changed, so an unchanged registry does not churn the
-// tool list and its list_changed notification.
+// reload loads the manifests and adopts them.
 func (s *store) reload() (bool, error) {
 	reg, err := cliregistry.Load(s.paths...)
 	if err != nil {
 		return false, err
 	}
-	availability, err := reg.Availability(s.inputs)
+	return s.adopt(reg)
+}
+
+// adopt evaluates availability for reg and installs it. It reports whether the
+// offered tool set changed, so an unchanged registry does not churn the tool
+// list and its list_changed notification.
+//
+// A registry that now declares conditions other than the ones the inputs were
+// typed against is refused: evaluating them would compare values the operator
+// never supplied. A registry that drops its conditions reads no inputs at all,
+// so it adopts cleanly.
+func (s *store) adopt(reg *cliregistry.Registry) (bool, error) {
+	declared := reg.AvailabilityInputs()
+	inputs := s.inputs
+	if len(declared) == 0 {
+		inputs = nil
+	} else if !maps.Equal(declared, s.declared) {
+		return false, fmt.Errorf("the registry's availability conditions changed (now %s); restart with matching -availability flags",
+			declaredConditions(declared))
+	}
+	availability, err := reg.Availability(inputs)
 	if err != nil {
 		return false, fmt.Errorf("availability: %w", err)
 	}
 	fp := fingerprint(reg, availability)
-	if s.reg != nil && fp == s.fingerprint {
-		return false, nil // no change
-	}
+	changed := s.reg == nil || fp != s.fingerprint
 	s.mu.Lock()
 	s.reg = reg
 	s.availability = availability
 	s.fingerprint = fp
 	s.mu.Unlock()
-	logUnavailable(availability)
-	return true, nil
+	if changed {
+		logUnavailable(availability)
+	}
+	return changed, nil
 }
 
 // fingerprint covers what a client can see: the offered tools and their

@@ -4,10 +4,28 @@ import (
 	"context"
 	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	cliregistry "github.com/sdougbrown/cli-registry"
 )
+
+// newScopedStore builds a store the way run does: the manifests load once to
+// type the inputs against the conditions they declare.
+func newScopedStore(t *testing.T, path string, inputs map[string]any) *store {
+	t.Helper()
+	reg, err := cliregistry.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st := newStore([]string{path}, inputs, reg.AvailabilityInputs())
+	if _, err := st.adopt(reg); err != nil {
+		t.Fatal(err)
+	}
+	return st
+}
 
 // scopedConditions mirrors the condition set the manifests of a consumer like
 // poo declare: every condition is a boolean the host knows at load.
@@ -116,7 +134,7 @@ func TestParseAvailability(t *testing.T) {
 
 func TestMCPAvailabilityFiltersTools(t *testing.T) {
 	p := writeRawRegistry(t, scopedRegistry)
-	st := newStore([]string{p}, map[string]any{"profile_side_effecting": false})
+	st := newScopedStore(t, p, map[string]any{"profile_side_effecting": false})
 	if _, err := st.reload(); err != nil {
 		t.Fatal(err)
 	}
@@ -143,7 +161,7 @@ func TestMCPAvailabilityFiltersTools(t *testing.T) {
 
 func TestMCPHandlerRefusesToolTakenAwayBeforeRebind(t *testing.T) {
 	p := writeRawRegistry(t, scopedRegistry)
-	st := newStore([]string{p}, map[string]any{"profile_side_effecting": true})
+	st := newScopedStore(t, p, map[string]any{"profile_side_effecting": true})
 	if _, err := st.reload(); err != nil {
 		t.Fatal(err)
 	}
@@ -178,7 +196,7 @@ func TestMCPHandlerRefusesToolTakenAwayBeforeRebind(t *testing.T) {
 
 func TestMCPReloadRemovesVanishedTools(t *testing.T) {
 	p := writeRawRegistry(t, scopedRegistry)
-	st := newStore([]string{p}, map[string]any{"profile_side_effecting": true})
+	st := newScopedStore(t, p, map[string]any{"profile_side_effecting": true})
 	if _, err := st.reload(); err != nil {
 		t.Fatal(err)
 	}
@@ -220,4 +238,132 @@ func TestRunRejectsMissingAvailabilityInput(t *testing.T) {
 	if got := run([]string{"-registry", p}); got != 1 {
 		t.Fatalf("run without the declared condition: exit = %d, want 1", got)
 	}
+}
+
+func TestMCPUnchangedReloadKeepsTheToolListQuiet(t *testing.T) {
+	var notifications atomic.Int32
+	client := mcp.NewClient(&mcp.Implementation{Name: "cli-registry-test", Version: "0"}, &mcp.ClientOptions{
+		ToolListChangedHandler: func(context.Context, *mcp.ToolListChangedRequest) { notifications.Add(1) },
+	})
+
+	p := writeRegistry(t, sayTool())
+	st := newStore([]string{p}, nil, nil)
+	reg, err := cliregistry.Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.adopt(reg); err != nil {
+		t.Fatal(err)
+	}
+	srv := mcp.NewServer(&mcp.Implementation{Name: "cli-registry", Version: "dev"}, nil)
+	st.apply(srv)
+
+	ctx := context.Background()
+	t1, t2 := mcp.NewInMemoryTransports()
+	if _, err := srv.Connect(ctx, t1, nil); err != nil {
+		t.Fatal(err)
+	}
+	sess, err := client.Connect(ctx, t2, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// One real change establishes the notification a client sees.
+	nowTool := `"now":{"description":"timestamp","command":["date","+%s"],"timeout":"10s",
+		"inputSchema":{"type":"object","properties":{},"additionalProperties":false},"output":{"mode":"raw"}}`
+	if err := os.WriteFile(p, []byte(`{"version":1,"tools":{`+sayTool()+`,`+nowTool+`}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if changed, err := st.reload(); err != nil || !changed {
+		t.Fatalf("reload: changed=%v err=%v", changed, err)
+	}
+	st.apply(srv)
+	waitFor(t, &notifications, 1)
+	base := notifications.Load()
+
+	// The watch tick reloads every two seconds; an unchanged registry must
+	// not re-apply and re-notify.
+	if changed, err := st.reload(); err != nil || changed {
+		t.Fatalf("unchanged reload: changed=%v err=%v", changed, err)
+	}
+	time.Sleep(4 * notificationSettle)
+	if got := notifications.Load(); got != base {
+		t.Fatalf("unchanged reload notified again: %d notifications, want %d", got, base)
+	}
+	_ = sess.Close()
+}
+
+// notificationSettle is longer than the SDK's own notification delay, so a
+// notification that was going to fire has fired.
+const notificationSettle = 50 * time.Millisecond
+
+func waitFor(t *testing.T, count *atomic.Int32, want int32) {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for count.Load() < want && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if count.Load() < want {
+		t.Fatalf("waited for %d notifications, saw %d", want, count.Load())
+	}
+}
+
+func TestMCPReloadRefusesChangedConditions(t *testing.T) {
+	p := writeRawRegistry(t, scopedRegistry)
+	newScopedStore(t, p, map[string]any{"profile_side_effecting": true})
+
+	// The manifests retype the condition. The inputs were typed against a
+	// boolean, and the flags cannot be re-read, so the reload is refused with
+	// the remedy instead of comparing a boolean against a string.
+	edited := strings.Replace(scopedRegistry, `"type": "boolean"`, `"type": "string"`, 1)
+	if err := os.WriteFile(p, []byte(edited), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	st := newStore([]string{p}, map[string]any{"profile_side_effecting": true},
+		map[string]string{"profile_side_effecting": "boolean"})
+	reg, err := cliregistry.Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = st.adopt(reg)
+	if err == nil || !strings.Contains(err.Error(), "restart with matching -availability flags") {
+		t.Fatalf("err = %v, want the restart remedy", err)
+	}
+}
+
+func TestMCPRefusalFollowsAReasonEdit(t *testing.T) {
+	p := writeRawRegistry(t, scopedRegistry)
+	st := newScopedStore(t, p, map[string]any{"profile_side_effecting": true})
+	srv := mcp.NewServer(&mcp.Implementation{Name: "cli-registry", Version: "dev"}, nil)
+	st.apply(srv)
+
+	ctx := context.Background()
+	_, sess := connect(t, srv)
+
+	// The profile flips and the store reloads before the watcher rebinds, so
+	// the tool is still registered and the handler must refuse it.
+	st.inputs = map[string]any{"profile_side_effecting": false}
+	if _, err := st.reload(); err != nil {
+		t.Fatal(err)
+	}
+
+	// A reason-only edit does not change what is offered, so the tool list
+	// stays put; the refusal a client reads must still be the new wording.
+	edited := strings.Replace(scopedRegistry, "the profile is read-only", "the profile offers no write tool", 1)
+	if err := os.WriteFile(p, []byte(edited), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if changed, err := st.reload(); err != nil || changed {
+		t.Fatalf("reason-only reload: changed=%v err=%v", changed, err)
+	}
+
+	call, err := sess.CallTool(ctx, &mcp.CallToolParams{Name: "gh-pr-edit"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	text, _ := call.Content[0].(*mcp.TextContent)
+	if text == nil || !strings.Contains(text.Text, "the profile offers no write tool") {
+		t.Fatalf("refusal = %+v, want the edited reason", call.Content[0])
+	}
+	_ = sess.Close()
 }

@@ -70,7 +70,7 @@ func connect(t *testing.T, srv *mcp.Server) (*mcp.Client, *mcp.ClientSession) {
 
 func TestMCPToolListAndCall(t *testing.T) {
 	p := writeRegistry(t, sayTool())
-	st := newStore([]string{p}, nil)
+	st := newStore([]string{p}, nil, nil)
 	if _, err := st.reload(); err != nil {
 		t.Fatal(err)
 	}
@@ -120,7 +120,7 @@ func TestMCPListChangedOnReload(t *testing.T) {
 	})
 
 	p := writeRegistry(t, sayTool())
-	st := newStore([]string{p}, nil)
+	st := newStore([]string{p}, nil, nil)
 	if _, err := st.reload(); err != nil {
 		t.Fatal(err)
 	}
