@@ -8,6 +8,8 @@ package cliregistry
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
+	"strings"
 
 	"github.com/umpire-tools/umpire-go"
 )
@@ -40,6 +42,16 @@ var availabilityRuleTypes = map[string]bool{
 	"requires": true, "enabledWhen": true, "disables": true, "anyOf": true, "eitherOf": true,
 }
 
+// ConditionTypes are the condition types a consumer must be able to type a
+// value for: the Umpire v1 set. A manifest declaring anything else fails the
+// load, because a consumer reads this list to build the inputs and cannot
+// supply a value for a type it does not know.
+var ConditionTypes = []string{"boolean", "string", "number", "string[]", "number[]"}
+
+func conditionTypeKnown(typ string) bool {
+	return slices.Contains(ConditionTypes, typ)
+}
+
 // compileAvailability validates the raw availability block against the
 // compiled tool set and compiles it to an engine. Rules may only reference
 // declared conditions; every tool becomes a schema field.
@@ -61,6 +73,12 @@ func compileAvailability(raw json.RawMessage, toolNames []string) (*availability
 		}
 		if err := json.Unmarshal(defRaw, &def); err != nil {
 			return nil, fmt.Errorf("decode availability condition %q: %w", name, err)
+		}
+		if !conditionTypeKnown(def.Type) {
+			return nil, fmt.Errorf(
+				"availability condition %q has type %q; consumer-typed conditions are %s",
+				name, def.Type, strings.Join(ConditionTypes, ", "),
+			)
 		}
 		conditions[name] = def.Type
 	}
