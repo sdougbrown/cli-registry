@@ -113,6 +113,22 @@ func TestParseAvailability(t *testing.T) {
 			},
 			want: `"sometimes" is not a boolean`,
 		},
+		{
+			name: "a number that is not a number is refused",
+			flags: []string{
+				"profile_side_effecting=true", "messaging_enabled=true", "mode=x",
+				"limit=abc", "tags=a", "ports=1",
+			},
+			want: `"abc" is not a number`,
+		},
+		{
+			name: "one bad member of a number array is refused",
+			flags: []string{
+				"profile_side_effecting=true", "messaging_enabled=true", "mode=x",
+				"limit=1", "tags=a", "ports=1,abc",
+			},
+			want: `"abc" is not a number`,
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := parseAvailability(tc.flags, scopedConditions)
@@ -233,6 +249,51 @@ func TestMCPReloadRemovesVanishedTools(t *testing.T) {
 	_ = sess.Close()
 }
 
+// TestParseConditionValueCoversTheConditionTypes pins the parser to the
+// library's vocabulary: a type cli-registry accepts as a condition is one an
+// operator can supply, or startup would refuse a registry that loads.
+func TestParseConditionValueCoversTheConditionTypes(t *testing.T) {
+	sample := map[string]string{
+		"boolean":  "true",
+		"number":   "1",
+		"string":   "text",
+		"string[]": "a,b",
+		"number[]": "1,2",
+	}
+	for _, typ := range cliregistry.ConditionTypes {
+		value, ok := sample[typ]
+		if !ok {
+			t.Fatalf("condition type %q has no sample value here", typ)
+		}
+		got, err := parseConditionValue(typ, value)
+		if err != nil {
+			t.Errorf("parsing a %s condition: %v", typ, err)
+			continue
+		}
+		if got == nil {
+			t.Errorf("parsing a %s condition produced nil", typ)
+		}
+	}
+}
+
+// TestLogStateFollowsAReasonEdit covers the operator's view: a reason-only
+// edit must re-print the withheld entry without churning the tool list.
+func TestLogStateFollowsAReasonEdit(t *testing.T) {
+	availability := map[string]cliregistry.ToolAvailability{
+		"pr-view": {Available: true},
+		"pr-edit": {Available: false, Reason: "the profile is read-only"},
+	}
+	before := logState(availability)
+	availability["pr-edit"] = cliregistry.ToolAvailability{Available: false, Reason: "the profile offers no write tool"}
+	if after := logState(availability); after == before {
+		t.Fatal("a reason-only edit left the logged state unchanged")
+	}
+	// Nothing withheld prints nothing.
+	if got := logState(map[string]cliregistry.ToolAvailability{"pr-view": {Available: true}}); got != "" {
+		t.Errorf("an all-available registry logged %q", got)
+	}
+}
+
 func TestRunRejectsMissingAvailabilityInput(t *testing.T) {
 	p := writeRawRegistry(t, scopedRegistry)
 	if got := run([]string{"-registry", p}); got != 1 {
@@ -310,7 +371,6 @@ func waitFor(t *testing.T, count *atomic.Int32, want int32) {
 
 func TestMCPReloadRefusesChangedConditions(t *testing.T) {
 	p := writeRawRegistry(t, scopedRegistry)
-	newScopedStore(t, p, map[string]any{"profile_side_effecting": true})
 
 	// The manifests retype the condition. The inputs were typed against a
 	// boolean, and the flags cannot be re-read, so the reload is refused with
@@ -366,4 +426,22 @@ func TestMCPRefusalFollowsAReasonEdit(t *testing.T) {
 		t.Fatalf("refusal = %+v, want the edited reason", call.Content[0])
 	}
 	_ = sess.Close()
+}
+
+func TestAllowedHostAcceptsBothLoopbackFamilies(t *testing.T) {
+	for _, host := range []string{
+		"localhost", "localhost:9100", "127.0.0.1", "127.0.0.1:9100",
+		// httptest falls back to the IPv6 loopback when it cannot bind the
+		// IPv4 one, and an IPv6 Host header carries the address in brackets.
+		"[::1]", "[::1]:9100", "::1",
+	} {
+		if !allowedHost(host) {
+			t.Errorf("allowedHost(%q) = false, want true", host)
+		}
+	}
+	for _, host := range []string{"example.com", "example.com:9100", "10.0.0.1:9100", "[::2]:9100"} {
+		if allowedHost(host) {
+			t.Errorf("allowedHost(%q) = true, want false", host)
+		}
+	}
 }
