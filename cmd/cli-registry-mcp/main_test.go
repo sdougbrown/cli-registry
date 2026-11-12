@@ -16,13 +16,36 @@ import (
 
 func writeRegistry(t *testing.T, toolJSON string) string {
 	t.Helper()
+	return writeRawRegistry(t, `{"version":1,"tools":{`+toolJSON+`}}`)
+}
+
+func writeRawRegistry(t *testing.T, content string) string {
+	t.Helper()
 	p := filepath.Join(t.TempDir(), "tools.json")
-	content := `{"version":1,"tools":{` + toolJSON + `}}`
 	if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	return p
 }
+
+// scopedRegistry gates one tool on a condition the consumer supplies at load.
+const scopedRegistry = `{
+	"version": 1,
+	"tools": {
+		"gh-pr-view": {"description":"list pull requests","command":["echo","list"],"timeout":"10s",
+			"inputSchema":{"type":"object","properties":{},"additionalProperties":false},"output":{"mode":"raw"}},
+		"gh-pr-edit": {"description":"edit a pull request","command":["echo","edit"],"timeout":"10s",
+			"inputSchema":{"type":"object","properties":{},"additionalProperties":false},"output":{"mode":"raw"}}
+	},
+	"availability": {
+		"conditions": {"profile_side_effecting": {"type": "boolean"}},
+		"rules": [
+			{"type": "enabledWhen", "field": "gh-pr-edit",
+			 "when": {"op": "cond", "condition": "profile_side_effecting"},
+			 "reason": "the profile is read-only"}
+		]
+	}
+}`
 
 func sayTool() string {
 	return `"say":{"description":"echo a message","command":["echo"],"timeout":"10s",
@@ -47,8 +70,8 @@ func connect(t *testing.T, srv *mcp.Server) (*mcp.Client, *mcp.ClientSession) {
 
 func TestMCPToolListAndCall(t *testing.T) {
 	p := writeRegistry(t, sayTool())
-	st := newStore([]string{p})
-	if err := st.reload(); err != nil {
+	st := newStore([]string{p}, nil)
+	if _, err := st.reload(); err != nil {
 		t.Fatal(err)
 	}
 	srv := mcp.NewServer(&mcp.Implementation{Name: "cli-registry", Version: "dev"}, nil)
@@ -97,8 +120,8 @@ func TestMCPListChangedOnReload(t *testing.T) {
 	})
 
 	p := writeRegistry(t, sayTool())
-	st := newStore([]string{p})
-	if err := st.reload(); err != nil {
+	st := newStore([]string{p}, nil)
+	if _, err := st.reload(); err != nil {
 		t.Fatal(err)
 	}
 	srv := mcp.NewServer(&mcp.Implementation{Name: "cli-registry", Version: "dev"}, nil)
@@ -114,15 +137,23 @@ func TestMCPListChangedOnReload(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Now a second tool appears; reload + rebind must emit list_changed.
+	// Now a second tool appears; reload + apply must emit list_changed.
 	nowTool := `"now":{"description":"timestamp","command":["date","+%s"],"timeout":"10s",
 		"inputSchema":{"type":"object","properties":{},"additionalProperties":false},"output":{"mode":"raw"}}`
 	content := `{"version":1,"tools":{` + sayTool() + `,` + nowTool + `}}`
 	if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	st.reload()
-	st.rebind(srv)
+	if changed, err := st.reload(); err != nil || !changed {
+		t.Fatalf("reload after adding a tool: changed=%v err=%v", changed, err)
+	}
+	st.apply(srv)
+
+	// A reload that changes nothing must not churn the tool set: re-applying
+	// every watch tick would re-notify list_changed on an unchanged registry.
+	if changed, err := st.reload(); err != nil || changed {
+		t.Fatalf("unchanged reload: changed=%v err=%v", changed, err)
+	}
 
 	deadline := time.Now().Add(3 * time.Second)
 	for !fired.Load() && time.Now().Before(deadline) {

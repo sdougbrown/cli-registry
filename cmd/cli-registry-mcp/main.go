@@ -9,6 +9,12 @@
 // and emits notifications/tools/list_changed so connected clients re-enumerate
 // without a restart. Each call snapshots the current registry for race safety.
 //
+// A manifest's availability rules decide which tools are offered. The consumer
+// supplies the conditions it declares as -availability name=value; an entry
+// the rules leave unavailable is not registered, so the model never sees it,
+// and a call to it is refused. The reason is logged to stderr, which is the
+// only place a client can learn why a tool is missing.
+//
 // Security (http): binds to a loopback addr by default, requires a bearer token
 // (CLI_REGISTRY_TOKEN token or -token) when set, and enforces Host/Origin checks.
 package main
@@ -23,6 +29,7 @@ import (
 	"net/http"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -37,12 +44,13 @@ func main() {
 
 func run(args []string) int {
 	var transport, addr, token string
-	var regs stringList
+	var regs, availabilityFlags stringList
 	fs := flag.NewFlagSet("cli-registry-mcp", flag.ContinueOnError)
 	fs.StringVar(&transport, "transport", "stdio", "stdio or http")
 	fs.StringVar(&addr, "addr", "127.0.0.1:9100", "listen address (http transport)")
 	fs.StringVar(&token, "token", "", "bearer token for http (or CLI_REGISTRY_TOKEN)")
 	fs.Var(&regs, "registry", "registry file or dir (repeatable)")
+	fs.Var(&availabilityFlags, "availability", "availability condition input name=value (repeatable)")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
@@ -58,8 +66,21 @@ func run(args []string) int {
 		token = os.Getenv("CLI_REGISTRY_TOKEN")
 	}
 
-	store := newStore(paths)
-	if err := store.reload(); err != nil {
+	// The declared condition types live in the manifests, so they load once
+	// before the flags can be typed.
+	loaded, err := cliregistry.Load(paths...)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "cli-registry-mcp: load:", err)
+		return 1
+	}
+	inputs, err := parseAvailability(availabilityFlags, loaded.AvailabilityInputs())
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "cli-registry-mcp:", err)
+		return 1
+	}
+
+	store := newStore(paths, inputs)
+	if _, err := store.reload(); err != nil {
 		fmt.Fprintln(os.Stderr, "cli-registry-mcp: load:", err)
 		return 1
 	}
@@ -95,91 +116,222 @@ func (s *stringList) Set(v string) error {
 	return nil
 }
 
+// parseAvailability types the -availability flags by the condition types the
+// manifest declares. Every declared condition must be supplied: Umpire treats
+// a missing input as an error, never as a default, and a silently defaulted
+// condition would offer a tool the profile should not have.
+func parseAvailability(flags []string, declared map[string]string) (map[string]any, error) {
+	if len(declared) == 0 {
+		if len(flags) > 0 {
+			return nil, fmt.Errorf("registry declares no availability conditions, got -availability %s", strings.Join(flags, " "))
+		}
+		return nil, nil
+	}
+	inputs := make(map[string]any, len(declared))
+	for _, flagValue := range flags {
+		name, value, ok := strings.Cut(flagValue, "=")
+		if !ok {
+			return nil, fmt.Errorf("-availability %q: want name=value", flagValue)
+		}
+		typ, known := declared[name]
+		if !known {
+			return nil, fmt.Errorf("-availability %q: no such condition; declared: %s", name, declaredConditions(declared))
+		}
+		typed, err := parseConditionValue(typ, value)
+		if err != nil {
+			return nil, fmt.Errorf("-availability %s: %w", name, err)
+		}
+		inputs[name] = typed
+	}
+	var missing []string
+	for name := range declared {
+		if _, ok := inputs[name]; !ok {
+			missing = append(missing, name)
+		}
+	}
+	if len(missing) > 0 {
+		sort.Strings(missing)
+		return nil, fmt.Errorf("missing availability inputs: %s; declared: %s", strings.Join(missing, ", "), declaredConditions(declared))
+	}
+	return inputs, nil
+}
+
+// parseConditionValue converts one flag value to the JSON value Umpire reads
+// for a condition of the declared type. Array members are comma-separated.
+func parseConditionValue(typ, value string) (any, error) {
+	switch typ {
+	case "boolean":
+		b, err := strconv.ParseBool(value)
+		if err != nil {
+			return nil, fmt.Errorf("%q is not a boolean", value)
+		}
+		return b, nil
+	case "number":
+		n, err := strconv.ParseFloat(value, 64)
+		if err != nil {
+			return nil, fmt.Errorf("%q is not a number", value)
+		}
+		return n, nil
+	case "string":
+		return value, nil
+	case "string[]":
+		return splitArray(value, func(item string) (any, error) { return item, nil })
+	case "number[]":
+		return splitArray(value, func(item string) (any, error) {
+			n, err := strconv.ParseFloat(item, 64)
+			if err != nil {
+				return nil, fmt.Errorf("%q is not a number", item)
+			}
+			return n, nil
+		})
+	default:
+		return nil, fmt.Errorf("declared type %q is not a condition type", typ)
+	}
+}
+
+func splitArray(value string, parse func(string) (any, error)) (any, error) {
+	if value == "" {
+		return []any{}, nil
+	}
+	items := strings.Split(value, ",")
+	out := make([]any, len(items))
+	for i, item := range items {
+		typed, err := parse(strings.TrimSpace(item))
+		if err != nil {
+			return nil, err
+		}
+		out[i] = typed
+	}
+	return out, nil
+}
+
+func declaredConditions(declared map[string]string) string {
+	names := make([]string, 0, len(declared))
+	for name, typ := range declared {
+		names = append(names, name+"="+typ)
+	}
+	sort.Strings(names)
+	return strings.Join(names, ", ")
+}
+
 // store holds the current immutable registry and rebinds the MCP tool set when
 // the underlying manifests change.
 type store struct {
-	mu          sync.Mutex
-	paths       []string
-	reg         *cliregistry.Registry
+	mu           sync.Mutex
+	paths        []string
+	inputs       map[string]any
+	reg          *cliregistry.Registry
+	availability map[string]cliregistry.ToolAvailability
+	// applied is the tool set last registered on the server, so a rebind
+	// removes exactly what it added.
+	applied     []string
 	fingerprint string
 }
 
-func newStore(paths []string) *store { return &store{paths: paths} }
-
-func (s *store) current() *cliregistry.Registry {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.reg
+func newStore(paths []string, inputs map[string]any) *store {
+	return &store{paths: paths, inputs: inputs}
 }
 
-func (s *store) reload() error {
+func (s *store) current() (*cliregistry.Registry, map[string]cliregistry.ToolAvailability) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.reg, s.availability
+}
+
+// reload loads the manifests and evaluates availability. It reports whether
+// the offered tool set changed, so an unchanged registry does not churn the
+// tool list and its list_changed notification.
+func (s *store) reload() (bool, error) {
 	reg, err := cliregistry.Load(s.paths...)
 	if err != nil {
-		return err
+		return false, err
 	}
-	fp := fingerprint(reg)
+	availability, err := reg.Availability(s.inputs)
+	if err != nil {
+		return false, fmt.Errorf("availability: %w", err)
+	}
+	fp := fingerprint(reg, availability)
 	if s.reg != nil && fp == s.fingerprint {
-		return nil // no change
+		return false, nil // no change
 	}
 	s.mu.Lock()
 	s.reg = reg
+	s.availability = availability
 	s.fingerprint = fp
 	s.mu.Unlock()
-	return nil
+	logUnavailable(availability)
+	return true, nil
 }
 
-func fingerprint(reg *cliregistry.Registry) string {
+// fingerprint covers what a client can see: the offered tools and their
+// descriptors. An unavailable entry is absent from the hash, so a change that
+// only takes a tool away still reads as a change.
+func fingerprint(reg *cliregistry.Registry, availability map[string]cliregistry.ToolAvailability) string {
 	tools := reg.Tools()
 	sort.Slice(tools, func(i, j int) bool { return tools[i].Name < tools[j].Name })
 	var b strings.Builder
 	for _, t := range tools {
+		if !availability[t.Name].Available {
+			continue
+		}
 		schema, _ := json.Marshal(t.InputSchema)
 		fmt.Fprintf(&b, "%s\u0000%s\u0000%s\u0000", t.Name, t.Description, schema)
 	}
 	return b.String()
 }
 
-// apply (re)writes the tool set on the server, notifying list_changed if there
-// was a previous set.
-func (s *store) apply(srv *mcp.Server) {
-	reg := s.current()
-	if reg == nil {
-		return
+// logUnavailable reports gated entries on stderr. tools/list has nowhere to
+// carry a reason, so this is where an operator learns why a tool is missing.
+func logUnavailable(availability map[string]cliregistry.ToolAvailability) {
+	var names []string
+	for name, a := range availability {
+		if !a.Available {
+			names = append(names, name)
+		}
 	}
-	for _, t := range reg.Tools() {
-		name := t.Name
-		desc := t.Description
-		schema := t.InputSchema
-		srv.AddTool(&mcp.Tool{Name: name, Description: desc, InputSchema: schema}, s.handler())
+	sort.Strings(names)
+	for _, name := range names {
+		fmt.Fprintf(os.Stderr, "cli-registry-mcp: %s is unavailable: %s\n", name, availability[name].Reason)
 	}
 }
 
-// rebind swaps the tool set after a reload: removes tools no longer present and
-// (re)adds current ones.
-func (s *store) rebind(srv *mcp.Server) {
-	old := s.current()
-	if old == nil {
-		s.apply(srv)
+// apply replaces the server's tool set with the currently offered tools,
+// notifying list_changed when there was a previous set.
+func (s *store) apply(srv *mcp.Server) {
+	reg, availability := s.current()
+	if reg == nil {
 		return
 	}
-	var names []string
-	for _, t := range old.Tools() {
-		names = append(names, t.Name)
+	s.mu.Lock()
+	previous := s.applied
+	s.mu.Unlock()
+	if len(previous) > 0 {
+		srv.RemoveTools(previous...)
 	}
-	if len(names) > 0 {
-		srv.RemoveTools(names...)
+	var applied []string
+	for _, t := range reg.Tools() {
+		if !availability[t.Name].Available {
+			continue
+		}
+		srv.AddTool(&mcp.Tool{Name: t.Name, Description: t.Description, InputSchema: t.InputSchema}, s.handler())
+		applied = append(applied, t.Name)
 	}
-	// remove/add via a clean apply: our fingerprinter auto-notifies on each
-	// change; RemoveTools already emitted list_changed.
-	s.apply(srv)
+	s.mu.Lock()
+	s.applied = applied
+	s.mu.Unlock()
 }
 
 func (s *store) handler() mcp.ToolHandler {
 	return func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		name := req.Params.Name
-		reg := s.current()
+		reg, availability := s.current()
 		if reg == nil {
 			return errResult(errors.New("registry not loaded")), nil
+		}
+		// A reload can take a tool away before the next rebind reaches the
+		// server, so the gate is checked at call time too.
+		if a, ok := availability[name]; ok && !a.Available {
+			return errResult(fmt.Errorf("tool %q is unavailable: %s", name, a.Reason)), nil
 		}
 		tool, ok := reg.Lookup(name)
 		if !ok {
@@ -228,8 +380,15 @@ func (s *store) watch(srv *mcp.Server) {
 	t := time.NewTicker(2 * time.Second)
 	defer t.Stop()
 	for range t.C {
-		if s.reload() == nil {
-			s.rebind(srv)
+		changed, err := s.reload()
+		if err != nil {
+			// A manifest edited into an invalid state keeps the last good
+			// tool set serving; say so instead of failing silently.
+			fmt.Fprintln(os.Stderr, "cli-registry-mcp: reload:", err)
+			continue
+		}
+		if changed {
+			s.apply(srv)
 		}
 	}
 }

@@ -45,6 +45,21 @@ CLI_REGISTRY_TOKEN=$(openssl rand -hex 16) \
 Point Claude/opencode at `url: http://127.0.0.1:9100` (bearer token) or at a
 `command:` that runs `cli-registry-mcp -registry ...`.
 
+A registry whose manifests declare availability rules is offered as a limited
+tool set. Pass every declared condition as `-availability name=value`, typed by
+the manifest's declaration (boolean, number, string, or a comma-separated
+array):
+
+```sh
+cli-registry-mcp -registry examples \
+  -availability profile_side_effecting=false \
+  -availability messaging_enabled=true
+```
+
+A tool the rules leave unavailable is not listed, calls to it are refused, and
+its reason is printed to stderr — `tools/list` has nowhere to carry it. A
+missing condition is an error at startup, never a default.
+
 ## Manifest
 
 JSON, YAML, or TOML (by extension), normalized to a JSON intermediate at ingest.

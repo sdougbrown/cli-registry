@@ -134,6 +134,9 @@ Consumer surface:
 
 Deciding what to do with an unavailable entry (drop it, or list it with its
 reason) is the consumer's call; the runtime returns both paths.
+`cli-registry-mcp` drops it: the tool is not registered, a call to it is
+refused, and `-availability name=value` supplies the declared conditions, all
+of which are required.
 
 ## Env semantics
 
