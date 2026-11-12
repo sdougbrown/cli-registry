@@ -56,9 +56,9 @@ cli-registry-mcp -registry examples \
   -availability messaging_enabled=true
 ```
 
-A tool the rules leave unavailable is not listed, calls to it are refused, and
-its reason is printed to stderr — `tools/list` has nowhere to carry it. A
-missing condition is an error at startup, never a default.
+A tool the rules leave unavailable is not listed, and calls to it are refused.
+Its reason is printed to stderr, because `tools/list` has nowhere to carry it.
+A missing condition is an error at startup, never a default.
 
 ## Manifest
 

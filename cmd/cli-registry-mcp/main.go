@@ -10,10 +10,10 @@
 // without a restart. Each call snapshots the current registry for race safety.
 //
 // A manifest's availability rules decide which tools are offered. The consumer
-// supplies the conditions it declares as -availability name=value; an entry
-// the rules leave unavailable is not registered, so the model never sees it,
-// and a call to it is refused. The reason is logged to stderr, which is the
-// only place a client can learn why a tool is missing.
+// supplies the conditions it declares as -availability name=value. An entry the
+// rules leave unavailable is never registered, so the model cannot see it. A
+// call to it is refused. The reason goes to stderr, the only place a client can
+// learn why a tool is missing.
 //
 // Security (http): binds to a loopback addr by default, requires a bearer token
 // (CLI_REGISTRY_TOKEN token or -token) when set, and enforces Host/Origin checks.
@@ -118,9 +118,9 @@ func (s *stringList) Set(v string) error {
 }
 
 // parseAvailability types the -availability flags by the condition types the
-// manifest declares. Every declared condition must be supplied: Umpire treats
-// a missing input as an error, never as a default, and a silently defaulted
-// condition would offer a tool the profile should not have.
+// manifest declares. Every declared condition must be supplied. Umpire treats a
+// missing input as an error, never as a default. A silently defaulted condition
+// would offer a tool the profile should not have.
 func parseAvailability(flags []string, declared map[string]string) (map[string]any, error) {
 	if len(declared) == 0 {
 		if len(flags) > 0 {
