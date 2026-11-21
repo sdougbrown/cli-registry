@@ -20,6 +20,7 @@
 //	type Option                         // per-call options: WithCWD, WithTimeout, WithEnv, WithScopedResolver
 //
 //	func (r *Registry) Call(ctx context.Context, tool Tool, args map[string]any, opt ...Option) (*Result, error)
+//	func (r *Registry) EnvBindings(tool string) ([]EnvBinding, bool)
 //
 //	type Result struct {
 //	    Stdout, Stderr []byte

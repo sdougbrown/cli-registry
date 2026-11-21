@@ -184,6 +184,27 @@ func (r *Registry) Lookup(name string) (Tool, bool) {
 	return Tool{Name: t.name, Description: t.description, InputSchema: t.inputSchemaRaw}, true
 }
 
+// EnvBindings returns the env bindings the named tool's manifest declares,
+// in name order, or false when no tool answers to the name. The bindings
+// are the ones Plan resolves, so a host that validates references at load
+// asks the same question the resolution does.
+func (r *Registry) EnvBindings(tool string) ([]EnvBinding, bool) {
+	t, ok := r.tools[tool]
+	if !ok {
+		return nil, false
+	}
+	names := make([]string, 0, len(t.env))
+	for name := range t.env {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	out := make([]EnvBinding, 0, len(names))
+	for _, name := range names {
+		out = append(out, parseBinding(name, t.env[name]))
+	}
+	return out, true
+}
+
 // Call validates args against tool's schema and input rules, builds argv,
 // spawns the command, and returns the decoded result. Args that fail
 // validation return a *ValidationError before any process is spawned.
