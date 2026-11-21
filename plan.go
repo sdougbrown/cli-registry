@@ -45,11 +45,13 @@ type EnvBinding struct {
 	Scope     string
 }
 
-// parseBinding builds the binding one manifest env entry declares. A value
-// with the `env:` prefix is a host-environment reference, a value with the
-// `session:` prefix is a SessionScope reference, and anything else is a
-// literal.
-func parseBinding(name, value string) EnvBinding {
+// ParseEnvBinding builds the binding one manifest env entry declares. A
+// value with the `env:` prefix is a host-environment reference, a value
+// with the `session:` prefix is a SessionScope reference, and anything
+// else is a literal. Registry.Plan and a host that reads manifests
+// itself resolve bindings through this one parse, so a value means the
+// same thing on both paths.
+func ParseEnvBinding(name, value string) EnvBinding {
 	if from, ok := strings.CutPrefix(value, "env:"); ok {
 		return EnvBinding{Name: name, From: from, Reference: true}
 	}
@@ -133,7 +135,7 @@ func (r *Registry) Plan(tool Tool, args map[string]any, opt ...Option) (*Plan, e
 	sort.Strings(names)
 	env := make([]EnvBinding, 0, len(names))
 	for _, name := range names {
-		env = append(env, parseBinding(name, t.env[name]))
+		env = append(env, ParseEnvBinding(name, t.env[name]))
 	}
 
 	timeout := t.timeout

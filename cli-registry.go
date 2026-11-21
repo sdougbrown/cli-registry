@@ -200,7 +200,7 @@ func (r *Registry) EnvBindings(tool string) ([]EnvBinding, bool) {
 	sort.Strings(names)
 	out := make([]EnvBinding, 0, len(names))
 	for _, name := range names {
-		out = append(out, parseBinding(name, t.env[name]))
+		out = append(out, ParseEnvBinding(name, t.env[name]))
 	}
 	return out, true
 }

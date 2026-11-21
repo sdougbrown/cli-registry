@@ -8,6 +8,11 @@ All notable changes to this project are recorded here. The format follows
 
 ### Added
 
+- `ParseEnvBinding(name, value string) EnvBinding`: the parse one manifest
+  env entry goes through — `env:NAME` host reference, `session:NAME` scoped
+  reference, anything else a literal. A host that reads manifests itself
+  builds its bindings with it, so a value means the same thing on every
+  path.
 - `Registry.EnvBindings(tool string) ([]EnvBinding, bool)`: the env bindings
   the named tool's manifest declares, in name order and unresolved — the
   bindings `Plan` resolves, so a host that validates references when the
