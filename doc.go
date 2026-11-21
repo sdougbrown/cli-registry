@@ -17,7 +17,7 @@
 //
 //	type Tool                           // one compiled tool
 //
-//	type Option                         // per-call options: WithCWD, WithTimeout, WithEnv
+//	type Option                         // per-call options: WithCWD, WithTimeout, WithEnv, WithScopedResolver
 //
 //	func (r *Registry) Call(ctx context.Context, tool Tool, args map[string]any, opt ...Option) (*Result, error)
 //
@@ -60,13 +60,15 @@
 //	type EnvBinding struct {
 //	    Name      string
 //	    Value     string // a literal, when Reference is false
-//	    From      string // the host variable a manifest `env:NAME` refers to
-//	    Reference bool   // true for an `env:NAME` reference; From may be empty
+//	    From      string // what a reference points at
+//	    Reference bool   // true for a reference; From may be empty for `env:`
+//	    Scope     string // "" for an `env:NAME` host reference; "session" for `session:NAME`
 //	}
 //	var BenignEnv []string        // variables Call copies from the host by default
 //
 //	func (r *Registry) Plan(tool Tool, args map[string]any, opt ...Option) (*Plan, error)
 //	func (p *Plan) ResolveEnv(getenv func(string) (string, bool)) ([]string, error)
+//	func (p *Plan) ResolveEnvScoped(getenv func(string) (string, bool), scoped ScopedResolver) ([]string, error)
 //	func (p *Plan) Finish(out Output) (*Result, error)
 //
 //	type Output struct {
@@ -79,7 +81,11 @@
 // Plan touches no process and reads no environment: an `env:NAME` reference
 // stays unresolved in Plan.Env, so the host decides which environment a
 // reference is resolved against. ResolveEnv applies BenignEnv, then the plan's
-// bindings, then WithEnv overrides, using the lookup it is given.
+// bindings, then WithEnv overrides, using the lookup it is given. A scoped
+// reference — a `session:NAME` value — stays unresolved the same way, and
+// ResolveEnvScoped resolves it through a resolver the host passes, so the
+// library never learns what a session is; the host that knows it answers the
+// names the session's scope carries.
 //
 // Plan.Dir is absolute with symlinks resolved whenever the manifest or WithCWD
 // fixes it, so an executor with its own session base runs in the directory the

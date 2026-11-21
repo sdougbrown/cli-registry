@@ -215,6 +215,7 @@ type callOptions struct {
 	cwd     string // requested cwd ("" = manifest-scoped/inherit)
 	timeout time.Duration
 	env     map[string]string // extra, overriding declared defaults
+	scoped  ScopedResolver    // resolves scoped references for Call; nil = refuse them
 }
 
 func defaultCallOptions() callOptions {
@@ -235,6 +236,14 @@ func WithTimeout(d time.Duration) Option { return func(o *callOptions) { o.timeo
 
 // WithEnv adds or overrides declared environment variables for a single call.
 func WithEnv(k, v string) Option { return func(o *callOptions) { o.env[k] = v } }
+
+// WithScopedResolver gives Call the resolver for a manifest's scoped
+// references (a `session:NAME` value). Without it, Call refuses a tool whose
+// manifest declares one; a host that knows the scope passes its resolver and
+// the reference resolves the way ResolveEnvScoped resolves it.
+func WithScopedResolver(scoped ScopedResolver) Option {
+	return func(o *callOptions) { o.scoped = scoped }
+}
 
 // IsTimeout reports whether err is a *TimeoutError (errors.As-aware helper). A
 // context-terminated run is also a *TimeoutError, for v0.1.0 compatibility;

@@ -23,7 +23,7 @@ Each tool:
 | `name` | string | auto | derived from tool key / map key |
 | `description` | string | yes | one-line intent for the model |
 | `command` | array<string> | yes | argv prefix; appended by the binding table |
-| `env` | map | no | allow-list; value is literal or `"env:NAME"` (context → child) |
+| `env` | map | no | allow-list; value is literal, `"env:NAME"` (host env → child), or `"session:NAME"` (scoped reference; `session:id` names the host's session value) |
 | `cwd` | object | no | `{ mode: "allow"|"inherit", roots: []string }`; relative roots resolve against the manifest file |
 | `timeout` | string (Go duration) | yes | mandatory |
 | `inputSchema` | object | yes | **one** JSON Schema per tool (below) |
@@ -143,6 +143,10 @@ of which are required.
 - Default: the child inherits **only** declared `env` variables (no blanket
   pass-through of arbitrary env). Context env explicitly declared as `"env:NAME"`
   is copied through; a missing context `NAME` is a load/definition error.
+- A value written `"session:NAME"` is a scoped reference: it stays unresolved
+  in the plan, and resolves through the resolver the host supplies (Call's
+  `WithScopedResolver`, or the host's own `ResolveEnvScoped`). Without a
+  resolver, a call or resolution of one fails naming the reference.
 - Never global `os.Setenv` mutation.
 
 ## cwd semantics

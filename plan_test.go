@@ -3,6 +3,7 @@ package cliregistry
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -476,6 +477,183 @@ func TestResolveEnvOrderOverridesAndScrub(t *testing.T) {
 	env, err = p.ResolveEnv(func(string) (string, bool) { return "", false })
 	if err != nil || env == nil || len(env) != 0 {
 		t.Fatalf("empty env must be non-nil: %#v, %v", env, err)
+	}
+}
+
+// A `session:NAME` value is a scoped reference: it stays unresolved in the
+// plan, ResolveEnv refuses it for want of a resolver, and ResolveEnvScoped
+// resolves it through the host's own resolver, beside the host-environment
+// references.
+func TestResolveEnvScopedReference(t *testing.T) {
+	r := fixtureRegistry(t, map[string]fixtureDef{"env": {env: map[string]string{
+		"SESSION_ID": "session:id", "TOKEN": "env:TOKEN", "LITERAL": "plain-literal",
+	}}})
+	p, err := r.Plan(mustTool(t, r, "env"), map[string]any{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var session, token, literal bool
+	for _, b := range p.Env {
+		if b.Reference && b.Value != "" {
+			t.Fatalf("Plan resolved a reference: %+v", b)
+		}
+		switch b.Name {
+		case "SESSION_ID":
+			session = b.Reference && b.Scope == SessionScope && b.From == "id" && b.Value == ""
+		case "TOKEN":
+			token = b.Reference && b.Scope == "" && b.From == "TOKEN"
+		case "LITERAL":
+			// A value without a reference prefix is a literal: the
+			// `session:` prefix always starts a reference, the way
+			// `env:` always does.
+			literal = !b.Reference && b.Value == "plain-literal"
+		}
+	}
+	if !session || !token || !literal {
+		t.Fatalf("bindings = %+v, want a session reference, an env reference and a literal", p.Env)
+	}
+
+	// Without a scoped resolver, ResolveEnv refuses the session reference and
+	// ResolveEnvScoped with a nil one does the same.
+	scrubbed := func(name string) (string, bool) {
+		if name == "TOKEN" {
+			return "scrubbed-token", true
+		}
+		return "", false
+	}
+	for _, err := range []error{
+		func() error { _, err := p.ResolveEnv(scrubbed); return err }(),
+		func() error { _, err := p.ResolveEnvScoped(scrubbed, nil); return err }(),
+	} {
+		if err == nil || !strings.Contains(err.Error(), "session:id") {
+			t.Fatalf("unresolved scoped reference: err = %v, want one naming session:id", err)
+		}
+	}
+
+	// With a resolver, the scoped reference resolves beside the host one.
+	env, err := p.ResolveEnvScoped(scrubbed, func(scope, name string) (string, error) {
+		if scope != "session" || name != "id" {
+			return "", fmt.Errorf("unknown reference %s:%s", scope, name)
+		}
+		return "sess-01", nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"LITERAL=plain-literal", "SESSION_ID=sess-01", "TOKEN=scrubbed-token"}
+	if !reflect.DeepEqual(env, want) {
+		t.Fatalf("env = %q, want %q", env, want)
+	}
+
+	// A reference the resolver does not answer fails with the resolver's own
+	// error.
+	_, err = p.ResolveEnvScoped(scrubbed, func(scope, name string) (string, error) {
+		return "", fmt.Errorf("no %s value %q", scope, name)
+	})
+	if err == nil || !strings.Contains(err.Error(), `session value "id"`) {
+		t.Fatalf("resolver error = %v, want the resolver's own", err)
+	}
+}
+
+// The reference prefixes are exact: a lookalike value is a literal, an
+// override value is never parsed, a scoped name over a benign one resolves
+// through the resolver, a bare `session:` names no value, and the resolver's
+// error comes back as it wrote it.
+func TestScopedReferenceEdges(t *testing.T) {
+	r := fixtureRegistry(t, map[string]fixtureDef{"env": {env: map[string]string{
+		"NEAR": "sessions:x", "SPACE": " session:x", "PATH": "session:id", "OVERRIDE": "session:id",
+	}}})
+	p, err := r.Plan(mustTool(t, r, "env"), map[string]any{}, WithEnv("OVERRIDE", "session:secret"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, b := range p.Env {
+		if (b.Name == "NEAR" || b.Name == "SPACE") && b.Reference {
+			t.Errorf("%s parsed as a reference: %+v", b.Name, b)
+		}
+	}
+
+	// The bindings resolve before the overrides apply, so an override cannot
+	// rescue a scoped binding from a nil resolver.
+	_, err = p.ResolveEnvScoped(func(string) (string, bool) { return "", false }, nil)
+	if err == nil || !strings.Contains(err.Error(), "session:id") {
+		t.Fatalf("resolution with an override and no resolver returned %v, want a session:id error", err)
+	}
+
+	// With a resolver, the scoped name over a benign one resolves through the
+	// resolver, and the override lands raw on top.
+	asked := 0
+	env, err := p.ResolveEnvScoped(func(name string) (string, bool) {
+		if name == "PATH" {
+			return "benign-path", true
+		}
+		return "", false
+	}, func(scope, name string) (string, error) {
+		asked++
+		if scope == "session" && name == "id" {
+			return "sess-01", nil
+		}
+		return "", fmt.Errorf("unknown %s:%s", scope, name)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(env, "PATH=sess-01") {
+		t.Fatalf("env = %q, want the scoped value over the benign one", env)
+	}
+	if !slices.Contains(env, "OVERRIDE=session:secret") {
+		t.Fatalf("env = %q, want the raw override", env)
+	}
+	if asked != 2 {
+		t.Fatalf("the resolver saw %d asks, want 2 (one per scoped binding)", asked)
+	}
+
+	// A bare `session:` names no value, the way a bare `env:` names no
+	// variable.
+	r2 := fixtureRegistry(t, map[string]fixtureDef{"env": {env: map[string]string{"X": "session:"}}})
+	p2, err := r2.Plan(mustTool(t, r2, "env"), map[string]any{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = p2.ResolveEnvScoped(func(string) (string, bool) { return "", false }, func(string, string) (string, error) {
+		return "v", nil
+	})
+	if err == nil || !strings.Contains(err.Error(), "names no value") {
+		t.Fatalf("a bare session: resolved: err = %v, want a names-no-value error", err)
+	}
+
+	// The resolver's error comes back as the resolver wrote it.
+	sentinel := errors.New("the session is gone")
+	_, err = p.ResolveEnvScoped(func(string) (string, bool) { return "", false }, func(string, string) (string, error) {
+		return "", sentinel
+	})
+	if !errors.Is(err, sentinel) {
+		t.Fatalf("resolver error = %v, want the sentinel unwrapped", err)
+	}
+}
+
+// Call refuses a scoped reference without a resolver, before any process
+// starts; with one, the reference resolves the way ResolveEnvScoped does.
+func TestCallWithScopedReference(t *testing.T) {
+	r := fixtureRegistry(t, map[string]fixtureDef{
+		"refusing": {env: map[string]string{"SESSION_ID": "session:id"}},
+		"probe":    probeTool(map[string]string{"SESSION_ID": "session:id"}, fixtureDef{}),
+	})
+	_, err := r.Call(context.Background(), mustTool(t, r, "refusing"), map[string]any{})
+	if err == nil || !strings.Contains(err.Error(), "has no resolver") {
+		t.Fatalf("Call without a resolver returned %v, want the refusal", err)
+	}
+	res, err := r.Call(context.Background(), mustTool(t, r, "probe"), map[string]any{}, WithScopedResolver(func(scope, name string) (string, error) {
+		if scope == "session" && name == "id" {
+			return "sess-01", nil
+		}
+		return "", fmt.Errorf("unknown %s:%s", scope, name)
+	}))
+	if err != nil {
+		t.Fatalf("Call with a resolver: %v", err)
+	}
+	if got := decodeProbe(t, res).Env["SESSION_ID"]; got != "sess-01" {
+		t.Fatalf("the probe read SESSION_ID=%q, want sess-01", got)
 	}
 }
 

@@ -125,7 +125,10 @@ res, err := p.Finish(out) // classifies exactly like Call
 
 `Plan` touches no process and reads no environment, so an `env:NAME` reference
 resolves against whatever environment the host passes to `ResolveEnv`, not the
-process environment. `BenignEnv` lists the variables `Call` copies by default.
+process environment. A `session:NAME` value is a scoped reference: it stays
+unresolved the same way, and `ResolveEnvScoped` resolves it through a resolver
+the host passes, so the reference can reach values only the host's session
+carries. `BenignEnv` lists the variables `Call` copies by default.
 A fixed `Plan.Dir` is absolute with symlinks resolved, so an executor with its
 own session base runs in the directory `Plan` validated; an empty one means the
 manifest left the choice to the host. A directory that cannot be fully
@@ -205,7 +208,9 @@ checks the vendored fixtures' integrity; `make verify` runs the whole gate.
 - **No shell** — argv passes to `exec.Command` directly (no injection).
 - **Env allow-list** — only declared variables (plus `BenignEnv`); an
   `env:NAME` passthrough must be declared, and a host that plans the call
-  resolves the reference against its own (scrubbed) environment.
+  resolves the reference against its own (scrubbed) environment. A
+  `session:NAME` reference resolves only through the resolver the host passes
+  to `ResolveEnvScoped`; the library itself carries no session values.
 - **cwd containment** — optional `allow` roots, canonicalized.
 - **Timeout + group kill** — on the Linux path the whole process group is
   killed while the leader's pid still names it, on every exit as well as on
