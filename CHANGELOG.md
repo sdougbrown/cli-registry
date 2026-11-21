@@ -8,6 +8,10 @@ All notable changes to this project are recorded here. The format follows
 
 ### Added
 
+- `Registry.EnvBindings(tool string) ([]EnvBinding, bool)`: the env bindings
+  the named tool's manifest declares, in name order and unresolved — the
+  bindings `Plan` resolves, so a host that validates references when the
+  manifests load asks the same question the resolution does.
 - Scoped environment references: a manifest env value written `session:NAME`
   is now a reference to a named scope rather than a literal, and resolves
   through a `ScopedResolver` the host passes to the new `Plan.ResolveEnvScoped`
