@@ -24,16 +24,39 @@ import (
 // them through the getenv it passes to ResolveEnv.
 var BenignEnv = []string{"PATH", "HOME", "LANG", "LC_ALL", "TMPDIR"}
 
+// SessionScope is the reference scope a manifest's `session:NAME` value
+// names. The library knows the prefix, not what a session is: a host
+// resolves scope "session" names through the resolver it passes to
+// ResolveEnvScoped.
+const SessionScope = "session"
+
 // EnvBinding is one manifest-declared environment variable, unresolved. Value
-// is the literal a manifest declares; Reference marks an `env:NAME` reference
-// and From names the host variable it points at. From may be empty — `env:` is
-// a reference to no variable, which is a missing reference rather than a
-// literal, exactly as in v0.1.0.
+// is the literal a manifest declares; Reference marks a reference and From
+// names what it points at — for Scope "" an `env:NAME` reference to a host
+// variable, for a named Scope (e.g. `session:id`) a value the host's scope
+// resolver supplies. From may be empty — `env:` is a reference to no
+// variable, which is a missing reference rather than a literal, exactly as
+// in v0.1.0.
 type EnvBinding struct {
 	Name      string
 	Value     string
 	From      string
 	Reference bool
+	Scope     string
+}
+
+// parseBinding builds the binding one manifest env entry declares. A value
+// with the `env:` prefix is a host-environment reference, a value with the
+// `session:` prefix is a SessionScope reference, and anything else is a
+// literal.
+func parseBinding(name, value string) EnvBinding {
+	if from, ok := strings.CutPrefix(value, "env:"); ok {
+		return EnvBinding{Name: name, From: from, Reference: true}
+	}
+	if from, ok := strings.CutPrefix(value, SessionScope+":"); ok {
+		return EnvBinding{Name: name, From: from, Reference: true, Scope: SessionScope}
+	}
+	return EnvBinding{Name: name, Value: value}
 }
 
 // Plan is one validated, fully built command that has not been run. A Plan is
@@ -109,12 +132,7 @@ func (r *Registry) Plan(tool Tool, args map[string]any, opt ...Option) (*Plan, e
 	sort.Strings(names)
 	env := make([]EnvBinding, 0, len(names))
 	for _, name := range names {
-		v := t.env[name]
-		if from, ok := strings.CutPrefix(v, "env:"); ok {
-			env = append(env, EnvBinding{Name: name, From: from, Reference: true})
-		} else {
-			env = append(env, EnvBinding{Name: name, Value: v})
-		}
+		env = append(env, parseBinding(name, t.env[name]))
 	}
 
 	timeout := t.timeout
@@ -134,16 +152,32 @@ func (r *Registry) Plan(tool Tool, args map[string]any, opt ...Option) (*Plan, e
 	}, nil
 }
 
+// ScopedResolver resolves one scoped reference: scope is the reference's
+// scope (SessionScope today) and name is what the reference names. A returned
+// error fails the resolution and is reported as the resolver wrote it.
+type ScopedResolver func(scope, name string) (string, error)
+
 // ResolveEnv turns the plan's env bindings into "NAME=value" entries for an
 // executor, using getenv to look host variables up. BenignEnv names are copied
 // first, then the manifest's bindings, then WithEnv overrides. A declared
 // env:NAME that getenv does not return is an error, and a bare `env:` (a
 // reference that names no variable) is the same missing-reference error.
 //
+// A scoped reference (a `session:NAME` value) is an error here: resolving one
+// needs the host's scope resolver, which ResolveEnvScoped takes.
+//
 // A host passes its own lookup (typically over a scrubbed environment) rather
 // than os.LookupEnv, so a manifest reference can never read a variable the
 // host removed.
 func (p *Plan) ResolveEnv(getenv func(string) (string, bool)) ([]string, error) {
+	return p.ResolveEnvScoped(getenv, nil)
+}
+
+// ResolveEnvScoped resolves the plan's env bindings the way ResolveEnv does,
+// and resolves scoped references through scoped besides. A scoped reference
+// the resolver does not answer fails the resolution with the resolver's own
+// error, and a nil resolver fails every scoped reference.
+func (p *Plan) ResolveEnvScoped(getenv func(string) (string, bool), scoped ScopedResolver) ([]string, error) {
 	values := map[string]string{}
 	var order []string
 	set := func(name, value string) {
@@ -158,7 +192,17 @@ func (p *Plan) ResolveEnv(getenv func(string) (string, bool)) ([]string, error) 
 		}
 	}
 	for _, b := range p.Env {
-		if b.Reference {
+		switch {
+		case b.Reference && b.Scope != "":
+			if scoped == nil {
+				return nil, fmt.Errorf("scoped reference %q has no resolver", b.Scope+":"+b.From)
+			}
+			v, err := scoped(b.Scope, b.From)
+			if err != nil {
+				return nil, err
+			}
+			set(b.Name, v)
+		case b.Reference:
 			if b.From == "" {
 				return nil, fmt.Errorf("referenced env %q not present", b.From)
 			}
@@ -167,9 +211,9 @@ func (p *Plan) ResolveEnv(getenv func(string) (string, bool)) ([]string, error) 
 				return nil, fmt.Errorf("referenced env %q not present", b.From)
 			}
 			set(b.Name, v)
-			continue
+		default:
+			set(b.Name, b.Value)
 		}
-		set(b.Name, b.Value)
 	}
 	extra := make([]string, 0, len(p.overrides))
 	for name := range p.overrides {

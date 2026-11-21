@@ -6,6 +6,18 @@ All notable changes to this project are recorded here. The format follows
 
 ## Unreleased
 
+### Added
+
+- Scoped environment references: a manifest env value written `session:NAME`
+  is now a reference to a named scope rather than a literal, and resolves
+  through a `ScopedResolver` the host passes to the new `Plan.ResolveEnvScoped`
+  (`Plan.ResolveEnv` refuses it, as there is no resolver to ask). The library
+  knows the `session:` prefix, not what a session is — the host that passes
+  the resolver decides which values the session scope carries. `EnvBinding`
+  grew a `Scope` field (`""` for an `env:NAME` host reference, `"session"`
+  for a `session:NAME` one), and both reference kinds stay unresolved in
+  `Plan.Env` until the host resolves them.
+
 ### Changed
 
 - **Breaking:** unknown keys in a tool body now fail the load (a

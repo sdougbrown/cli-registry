@@ -3,6 +3,7 @@ package cliregistry
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -476,6 +477,81 @@ func TestResolveEnvOrderOverridesAndScrub(t *testing.T) {
 	env, err = p.ResolveEnv(func(string) (string, bool) { return "", false })
 	if err != nil || env == nil || len(env) != 0 {
 		t.Fatalf("empty env must be non-nil: %#v, %v", env, err)
+	}
+}
+
+// A `session:NAME` value is a scoped reference: it stays unresolved in the
+// plan, ResolveEnv refuses it for want of a resolver, and ResolveEnvScoped
+// resolves it through the host's own resolver, beside the host-environment
+// references.
+func TestResolveEnvScopedReference(t *testing.T) {
+	r := fixtureRegistry(t, map[string]fixtureDef{"env": {env: map[string]string{
+		"SESSION_ID": "session:id", "TOKEN": "env:TOKEN", "LITERAL": "plain-literal",
+	}}})
+	p, err := r.Plan(mustTool(t, r, "env"), map[string]any{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var session, token, literal bool
+	for _, b := range p.Env {
+		if b.Reference && b.Value != "" {
+			t.Fatalf("Plan resolved a reference: %+v", b)
+		}
+		switch b.Name {
+		case "SESSION_ID":
+			session = b.Reference && b.Scope == SessionScope && b.From == "id" && b.Value == ""
+		case "TOKEN":
+			token = b.Reference && b.Scope == "" && b.From == "TOKEN"
+		case "LITERAL":
+			// A value without a reference prefix is a literal: the
+			// `session:` prefix always starts a reference, the way
+			// `env:` always does.
+			literal = !b.Reference && b.Value == "plain-literal"
+		}
+	}
+	if !session || !token || !literal {
+		t.Fatalf("bindings = %+v, want a session reference, an env reference and a literal", p.Env)
+	}
+
+	// Without a scoped resolver, ResolveEnv refuses the session reference and
+	// ResolveEnvScoped with a nil one does the same.
+	scrubbed := func(name string) (string, bool) {
+		if name == "TOKEN" {
+			return "scrubbed-token", true
+		}
+		return "", false
+	}
+	for _, err := range []error{
+		func() error { _, err := p.ResolveEnv(scrubbed); return err }(),
+		func() error { _, err := p.ResolveEnvScoped(scrubbed, nil); return err }(),
+	} {
+		if err == nil || !strings.Contains(err.Error(), "session:id") {
+			t.Fatalf("unresolved scoped reference: err = %v, want one naming session:id", err)
+		}
+	}
+
+	// With a resolver, the scoped reference resolves beside the host one.
+	env, err := p.ResolveEnvScoped(scrubbed, func(scope, name string) (string, error) {
+		if scope != "session" || name != "id" {
+			return "", fmt.Errorf("unknown reference %s:%s", scope, name)
+		}
+		return "sess-01", nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"LITERAL=plain-literal", "SESSION_ID=sess-01", "TOKEN=scrubbed-token"}
+	if !reflect.DeepEqual(env, want) {
+		t.Fatalf("env = %q, want %q", env, want)
+	}
+
+	// A reference the resolver does not answer fails with the resolver's own
+	// error.
+	_, err = p.ResolveEnvScoped(scrubbed, func(scope, name string) (string, error) {
+		return "", fmt.Errorf("no %s value %q", scope, name)
+	})
+	if err == nil || !strings.Contains(err.Error(), `session value "id"`) {
+		t.Fatalf("resolver error = %v, want the resolver's own", err)
 	}
 }
 
