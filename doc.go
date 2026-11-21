@@ -17,7 +17,7 @@
 //
 //	type Tool                           // one compiled tool
 //
-//	type Option                         // per-call options: WithCWD, WithTimeout, WithEnv
+//	type Option                         // per-call options: WithCWD, WithTimeout, WithEnv, WithScopedResolver
 //
 //	func (r *Registry) Call(ctx context.Context, tool Tool, args map[string]any, opt ...Option) (*Result, error)
 //

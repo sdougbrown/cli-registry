@@ -188,7 +188,7 @@ func (p *Plan) run(ctx context.Context) (*Result, error) {
 			Cause:   err,
 		}
 	}
-	env, err := p.ResolveEnv(os.LookupEnv)
+	env, err := p.ResolveEnvScoped(os.LookupEnv, p.scoped)
 	if err != nil {
 		return nil, err
 	}

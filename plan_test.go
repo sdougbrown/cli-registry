@@ -555,6 +555,108 @@ func TestResolveEnvScopedReference(t *testing.T) {
 	}
 }
 
+// The reference prefixes are exact: a lookalike value is a literal, an
+// override value is never parsed, a scoped name over a benign one resolves
+// through the resolver, a bare `session:` names no value, and the resolver's
+// error comes back as it wrote it.
+func TestScopedReferenceEdges(t *testing.T) {
+	r := fixtureRegistry(t, map[string]fixtureDef{"env": {env: map[string]string{
+		"NEAR": "sessions:x", "SPACE": " session:x", "PATH": "session:id", "OVERRIDE": "session:id",
+	}}})
+	p, err := r.Plan(mustTool(t, r, "env"), map[string]any{}, WithEnv("OVERRIDE", "session:secret"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, b := range p.Env {
+		if (b.Name == "NEAR" || b.Name == "SPACE") && b.Reference {
+			t.Errorf("%s parsed as a reference: %+v", b.Name, b)
+		}
+	}
+
+	// The bindings resolve before the overrides apply, so an override cannot
+	// rescue a scoped binding from a nil resolver.
+	_, err = p.ResolveEnvScoped(func(string) (string, bool) { return "", false }, nil)
+	if err == nil || !strings.Contains(err.Error(), "session:id") {
+		t.Fatalf("resolution with an override and no resolver returned %v, want a session:id error", err)
+	}
+
+	// With a resolver, the scoped name over a benign one resolves through the
+	// resolver, and the override lands raw on top.
+	asked := 0
+	env, err := p.ResolveEnvScoped(func(name string) (string, bool) {
+		if name == "PATH" {
+			return "benign-path", true
+		}
+		return "", false
+	}, func(scope, name string) (string, error) {
+		asked++
+		if scope == "session" && name == "id" {
+			return "sess-01", nil
+		}
+		return "", fmt.Errorf("unknown %s:%s", scope, name)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(env, "PATH=sess-01") {
+		t.Fatalf("env = %q, want the scoped value over the benign one", env)
+	}
+	if !slices.Contains(env, "OVERRIDE=session:secret") {
+		t.Fatalf("env = %q, want the raw override", env)
+	}
+	if asked != 2 {
+		t.Fatalf("the resolver saw %d asks, want 2 (one per scoped binding)", asked)
+	}
+
+	// A bare `session:` names no value, the way a bare `env:` names no
+	// variable.
+	r2 := fixtureRegistry(t, map[string]fixtureDef{"env": {env: map[string]string{"X": "session:"}}})
+	p2, err := r2.Plan(mustTool(t, r2, "env"), map[string]any{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = p2.ResolveEnvScoped(func(string) (string, bool) { return "", false }, func(string, string) (string, error) {
+		return "v", nil
+	})
+	if err == nil || !strings.Contains(err.Error(), "names no value") {
+		t.Fatalf("a bare session: resolved: err = %v, want a names-no-value error", err)
+	}
+
+	// The resolver's error comes back as the resolver wrote it.
+	sentinel := errors.New("the session is gone")
+	_, err = p.ResolveEnvScoped(func(string) (string, bool) { return "", false }, func(string, string) (string, error) {
+		return "", sentinel
+	})
+	if !errors.Is(err, sentinel) {
+		t.Fatalf("resolver error = %v, want the sentinel unwrapped", err)
+	}
+}
+
+// Call refuses a scoped reference without a resolver, before any process
+// starts; with one, the reference resolves the way ResolveEnvScoped does.
+func TestCallWithScopedReference(t *testing.T) {
+	r := fixtureRegistry(t, map[string]fixtureDef{
+		"refusing": {env: map[string]string{"SESSION_ID": "session:id"}},
+		"probe":    probeTool(map[string]string{"SESSION_ID": "session:id"}, fixtureDef{}),
+	})
+	_, err := r.Call(context.Background(), mustTool(t, r, "refusing"), map[string]any{})
+	if err == nil || !strings.Contains(err.Error(), "has no resolver") {
+		t.Fatalf("Call without a resolver returned %v, want the refusal", err)
+	}
+	res, err := r.Call(context.Background(), mustTool(t, r, "probe"), map[string]any{}, WithScopedResolver(func(scope, name string) (string, error) {
+		if scope == "session" && name == "id" {
+			return "sess-01", nil
+		}
+		return "", fmt.Errorf("unknown %s:%s", scope, name)
+	}))
+	if err != nil {
+		t.Fatalf("Call with a resolver: %v", err)
+	}
+	if got := decodeProbe(t, res).Env["SESSION_ID"]; got != "sess-01" {
+		t.Fatalf("the probe read SESSION_ID=%q, want sess-01", got)
+	}
+}
+
 // WithCWD is for a host that decided the directory itself: a tool whose
 // manifest leaves the cwd to the host accepts it, rather than failing as if it
 // were an unauthorised allow-scope request.

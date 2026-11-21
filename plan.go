@@ -71,6 +71,7 @@ type Plan struct {
 
 	t         *tool
 	overrides map[string]string // WithEnv values, applied last by ResolveEnv
+	scoped    ScopedResolver   // WithScopedResolver's, for Call's own resolution
 }
 
 // Output is a completed run, as a host captured it. Stdout and Stderr are the
@@ -149,6 +150,7 @@ func (r *Registry) Plan(tool Tool, args map[string]any, opt ...Option) (*Plan, e
 		Timeout:   timeout,
 		t:         t,
 		overrides: opts.env,
+		scoped:    opts.scoped,
 	}, nil
 }
 
@@ -194,6 +196,9 @@ func (p *Plan) ResolveEnvScoped(getenv func(string) (string, bool), scoped Scope
 	for _, b := range p.Env {
 		switch {
 		case b.Reference && b.Scope != "":
+			if b.From == "" {
+				return nil, fmt.Errorf("scoped reference %q names no value", b.Scope+":")
+			}
 			if scoped == nil {
 				return nil, fmt.Errorf("scoped reference %q has no resolver", b.Scope+":"+b.From)
 			}

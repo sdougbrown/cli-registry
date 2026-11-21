@@ -16,9 +16,20 @@ All notable changes to this project are recorded here. The format follows
   the resolver decides which values the session scope carries. `EnvBinding`
   grew a `Scope` field (`""` for an `env:NAME` host reference, `"session"`
   for a `session:NAME` one), and both reference kinds stay unresolved in
-  `Plan.Env` until the host resolves them.
+  `Plan.Env` until the host resolves them. `Call` takes the same resolver
+  through a new `WithScopedResolver` option; without it, a call of a tool
+  whose manifest declares a scoped reference fails closed.
 
 ### Changed
+
+- **Breaking:** a manifest env value that begins with `session:` used to pass
+  through as a literal; it is now a scoped reference. A manifest that relied
+  on such a literal must rewrite it (for example with the value itself), and
+  a call through `Call` without `WithScopedResolver` now fails where it used
+  to run. Resolution of the new reference form fails closed everywhere:
+  `Plan.ResolveEnv`, `Plan.ResolveEnvScoped` with a nil resolver, and `Call`
+  without `WithScopedResolver` all refuse a scoped reference rather than
+  passing one through unresolved.
 
 - **Breaking:** unknown keys in a tool body now fail the load (a
   `*DefinitionError` naming the key, the tool, and the manifest file) instead
