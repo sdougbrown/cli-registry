@@ -801,3 +801,22 @@ func TestEnvBindingsMatchThePlan(t *testing.T) {
 		t.Fatal("EnvBindings reported a tool for an unknown name")
 	}
 }
+
+// ParseEnvBinding is the one parse a manifest env value goes through: the
+// host reference, the scoped reference, and the literal.
+func TestParseEnvBinding(t *testing.T) {
+	cases := []struct {
+		value string
+		want  EnvBinding
+	}{
+		{"env:TOKEN", EnvBinding{Name: "TOKEN", From: "TOKEN", Reference: true}},
+		{"session:id", EnvBinding{Name: "SESSION", From: "id", Reference: true, Scope: SessionScope}},
+		{"plain-literal", EnvBinding{Name: "PLAIN", Value: "plain-literal"}},
+		{"env:", EnvBinding{Name: "BARE", Reference: true}},
+	}
+	for _, c := range cases {
+		if got := ParseEnvBinding(c.want.Name, c.value); got != c.want {
+			t.Errorf("ParseEnvBinding(%q) = %+v, want %+v", c.value, got, c.want)
+		}
+	}
+}
