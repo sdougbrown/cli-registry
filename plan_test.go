@@ -778,3 +778,26 @@ func TestPlanAndCallRefuseAnUnknownTool(t *testing.T) {
 		t.Fatal("an unknown tool spawned a process")
 	}
 }
+
+// EnvBindings returns the bindings Plan resolves: the manifest's entries in
+// name order, references unresolved, and no tool for an unknown name.
+func TestEnvBindingsMatchThePlan(t *testing.T) {
+	r := fixtureRegistry(t, map[string]fixtureDef{"env": {env: map[string]string{
+		"TOKEN": "env:TOKEN", "SESSION": "session:id", "LITERAL": "lit",
+	}}})
+	bindings, ok := r.EnvBindings("env")
+	if !ok {
+		t.Fatal("EnvBindings reported no tool for a loaded one")
+	}
+	want := []EnvBinding{
+		{Name: "LITERAL", Value: "lit"},
+		{Name: "SESSION", From: "id", Reference: true, Scope: SessionScope},
+		{Name: "TOKEN", From: "TOKEN", Reference: true},
+	}
+	if !reflect.DeepEqual(bindings, want) {
+		t.Fatalf("bindings = %+v, want %+v", bindings, want)
+	}
+	if _, ok := r.EnvBindings("no-such-tool"); ok {
+		t.Fatal("EnvBindings reported a tool for an unknown name")
+	}
+}
