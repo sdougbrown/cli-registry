@@ -212,10 +212,10 @@ type Result struct {
 type Option func(*callOptions)
 
 type callOptions struct {
-	cwd     string          // requested cwd ("" = manifest-scoped/inherit)
+	cwd     string // requested cwd ("" = manifest-scoped/inherit)
 	timeout time.Duration
 	env     map[string]string // extra, overriding declared defaults
-	scoped  ScopedResolver   // resolves scoped references for Call; nil = refuse them
+	scoped  ScopedResolver    // resolves scoped references for Call; nil = refuse them
 }
 
 func defaultCallOptions() callOptions {

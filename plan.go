@@ -71,7 +71,7 @@ type Plan struct {
 
 	t         *tool
 	overrides map[string]string // WithEnv values, applied last by ResolveEnv
-	scoped    ScopedResolver   // WithScopedResolver's, for Call's own resolution
+	scoped    ScopedResolver    // WithScopedResolver's, for Call's own resolution
 }
 
 // Output is a completed run, as a host captured it. Stdout and Stderr are the
