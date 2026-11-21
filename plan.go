@@ -31,8 +31,8 @@ var BenignEnv = []string{"PATH", "HOME", "LANG", "LC_ALL", "TMPDIR"}
 const SessionScope = "session"
 
 // EnvBinding is one manifest-declared environment variable, unresolved. Value
-// is the literal a manifest declares; Reference marks a reference and From
-// names what it points at — for Scope "" an `env:NAME` reference to a host
+// is the literal a manifest declares. Reference marks a reference, and From
+// names what it points at: for Scope "" an `env:NAME` reference to a host
 // variable, for a named Scope (e.g. `session:id`) a value the host's scope
 // resolver supplies. From may be empty — `env:` is a reference to no
 // variable, which is a missing reference rather than a literal, exactly as
@@ -173,8 +173,8 @@ func (p *Plan) ResolveEnv(getenv func(string) (string, bool)) ([]string, error) 
 	return p.ResolveEnvScoped(getenv, nil)
 }
 
-// ResolveEnvScoped resolves the plan's env bindings the way ResolveEnv does,
-// and resolves scoped references through scoped besides. A scoped reference
+// ResolveEnvScoped resolves the plan's env bindings the way ResolveEnv does.
+// It resolves scoped references through scoped besides. A scoped reference
 // the resolver does not answer fails the resolution with the resolver's own
 // error, and a nil resolver fails every scoped reference.
 func (p *Plan) ResolveEnvScoped(getenv func(string) (string, bool), scoped ScopedResolver) ([]string, error) {
