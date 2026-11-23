@@ -127,14 +127,18 @@ escape described above.
 ## Compile-time rejections (fail registry load, never silent)
 
 - `property` not in `inputSchema`, or top-level property with no binding (correspondence mismatch).
-- `object`/`other` type on any binding style other than `json` (objects cannot be flattened to argv in v1).
-- `boolean` in `positional` style.
 - Unsupported `style` value.
 - Multiple stdin bindings, or a stdin binding on a non-string property.
 - A `json` binding on a property that is not a concrete `object` or `array`
   (branch kinds such as `oneOf` included), or a second stdin-or-json binding
   (one shared stdin slot).
 - Schema×style combos not enumerated above.
+
+## Call-time rejections (fail `Plan`/`Call`, never silent)
+
+- `object`/`other` type on any binding style other than `json` (objects cannot
+  be flattened to argv in v1).
+- `boolean` in `positional` style.
 
 ## Examples
 
