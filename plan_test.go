@@ -803,7 +803,7 @@ func TestEnvBindingsMatchThePlan(t *testing.T) {
 }
 
 // ParseEnvBinding is the one parse a manifest env value goes through: the
-// host reference, the scoped reference, and the literal.
+// host reference, the scoped references, and the literal.
 func TestParseEnvBinding(t *testing.T) {
 	cases := []struct {
 		value string
@@ -811,8 +811,10 @@ func TestParseEnvBinding(t *testing.T) {
 	}{
 		{"env:TOKEN", EnvBinding{Name: "TOKEN", From: "TOKEN", Reference: true}},
 		{"session:id", EnvBinding{Name: "SESSION", From: "id", Reference: true, Scope: SessionScope}},
+		{"scope:url", EnvBinding{Name: "GIT_FEEDBACK_URL", From: "url", Reference: true, Scope: ScopeScope}},
 		{"plain-literal", EnvBinding{Name: "PLAIN", Value: "plain-literal"}},
 		{"env:", EnvBinding{Name: "BARE", Reference: true}},
+		{"scope:", EnvBinding{Name: "BARE_SCOPE", Reference: true, Scope: ScopeScope}},
 	}
 	for _, c := range cases {
 		if got := ParseEnvBinding(c.want.Name, c.value); got != c.want {

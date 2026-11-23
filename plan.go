@@ -30,6 +30,12 @@ var BenignEnv = []string{"PATH", "HOME", "LANG", "LC_ALL", "TMPDIR"}
 // ResolveEnvScoped.
 const SessionScope = "session"
 
+// ScopeScope is the reference scope a manifest's `scope:NAME` value
+// names. The library knows the prefix, not what a scope is: a host
+// resolves `scope:NAME` values through the resolver it passes to
+// ResolveEnvScoped.
+const ScopeScope = "scope"
+
 // EnvBinding is one manifest-declared environment variable, unresolved. Value
 // is the literal a manifest declares. Reference marks a reference, and From
 // names what it points at: for Scope "" an `env:NAME` reference to a host
@@ -47,16 +53,20 @@ type EnvBinding struct {
 
 // ParseEnvBinding builds the binding one manifest env entry declares. A
 // value with the `env:` prefix is a host-environment reference, a value
-// with the `session:` prefix is a SessionScope reference, and anything
-// else is a literal. Registry.Plan and a host that reads manifests
-// itself resolve bindings through this one parse, so a value means the
-// same thing on both paths.
+// with the `session:` prefix is a SessionScope reference, a value with
+// the `scope:` prefix is a ScopeScope reference, and anything else is a
+// literal. Registry.Plan and a host that reads manifests itself resolve
+// bindings through this one parse, so a value means the same thing on
+// both paths.
 func ParseEnvBinding(name, value string) EnvBinding {
 	if from, ok := strings.CutPrefix(value, "env:"); ok {
 		return EnvBinding{Name: name, From: from, Reference: true}
 	}
 	if from, ok := strings.CutPrefix(value, SessionScope+":"); ok {
 		return EnvBinding{Name: name, From: from, Reference: true, Scope: SessionScope}
+	}
+	if from, ok := strings.CutPrefix(value, ScopeScope+":"); ok {
+		return EnvBinding{Name: name, From: from, Reference: true, Scope: ScopeScope}
 	}
 	return EnvBinding{Name: name, Value: value}
 }
@@ -157,7 +167,7 @@ func (r *Registry) Plan(tool Tool, args map[string]any, opt ...Option) (*Plan, e
 }
 
 // ScopedResolver resolves one scoped reference: scope is the reference's
-// scope (SessionScope today) and name is what the reference names. A returned
+// scope (SessionScope or ScopeScope today) and name is what the reference names. A returned
 // error fails the resolution and is reported as the resolver wrote it.
 type ScopedResolver func(scope, name string) (string, error)
 

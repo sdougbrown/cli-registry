@@ -16,10 +16,16 @@ All notable changes to this project are recorded here. The format follows
   rejection, and key order is deterministic (sorted, per Go's JSON encoding).
   `specs/argv.md` states the semantics.
 - `ParseEnvBinding(name, value string) EnvBinding`: the parse one manifest
-  env entry goes through — `env:NAME` host reference, `session:NAME` scoped
-  reference, anything else a literal. A host that reads manifests itself
+  env entry goes through — `env:NAME` host reference, `session:NAME`
+  scoped reference, `scope:NAME` scoped reference, anything else a
+  literal. A host that reads manifests itself
   builds its bindings with it, so a value means the same thing on every
   path.
+- `scope:NAME` manifest env values: a scoped reference the host resolves
+  through the same `ScopedResolver` path as `session:NAME`, with the
+  host validating the name against the tool's declared scope.
+  `ParseEnvBinding` parses it beside the `env:` and `session:` prefixes,
+  and the binding reports it with `Scope` set to `scope`.
 - `Registry.EnvBindings(tool string) ([]EnvBinding, bool)`: the env bindings
   the named tool's manifest declares, in name order and unresolved — the
   bindings `Plan` resolves, so a host that validates references when the
