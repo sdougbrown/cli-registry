@@ -42,7 +42,7 @@ type tool struct {
 
 type binding struct {
 	property string
-	style    string // equals | space | short | positional | stdin
+	style    string // equals | space | short | positional | stdin | json
 	flag     string // flag text for equals, space, short, or stdin
 }
 
@@ -215,10 +215,18 @@ func (r *Registry) compileTool(doc *manifest.Document, name string) error {
 			case "positional":
 			case "stdin":
 				if stdinBound {
-					return errors.New("only one stdin binding is allowed")
+					return errors.New("only one stdin/json binding is allowed")
 				}
 				if !vs.StringProperty(b.Property) {
 					return fmt.Errorf("stdin binding %q requires a string property", b.Property)
+				}
+				stdinBound = true
+			case "json":
+				if stdinBound {
+					return errors.New("only one stdin/json binding is allowed")
+				}
+				if !vs.ObjectOrArrayProperty(b.Property) {
+					return fmt.Errorf("json binding %q requires an object or array property", b.Property)
 				}
 				stdinBound = true
 			default:
@@ -341,6 +349,17 @@ func (t *tool) appendBinding(argv []string, b binding, v any, first bool, stdin 
 			argv = append(argv, b.flag)
 		}
 		s := v.(string)
+		*stdin = &s
+		return argv, first, nil
+	case "json":
+		if b.flag != "" {
+			argv = append(argv, b.flag)
+		}
+		raw, err := json.Marshal(v)
+		if err != nil {
+			return argv, first, fmt.Errorf("binding %q: %w", b.property, err)
+		}
+		s := string(raw)
 		*stdin = &s
 		return argv, first, nil
 	case "equals":
