@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "tools": {
+    "notes": {
+      "description": "in-memory notes tool driven by poo_fn (see fn_notes.py); expects the repo root as the working directory",
+      "command": ["python3", "examples/fn_notes.py"],
+      "timeout": "10s",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "object",
+            "properties": {
+              "op": { "type": "string" }
+            },
+            "required": ["op"],
+            "additionalProperties": true
+          }
+        },
+        "required": ["data"],
+        "additionalProperties": false
+      },
+      "bindings": [
+        { "property": "data", "style": "json", "flag": "--data-stdin" }
+      ],
+      "output": { "mode": "json" }
+    }
+  }
+}
