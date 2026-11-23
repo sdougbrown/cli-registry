@@ -166,6 +166,12 @@ func TestJSONBinding(t *testing.T) {
 	if err := json.Unmarshal(res.Stdout, &got); err != nil || got.Input != `{"a":"two","b":1}` || slices.Contains(got.Args, "--data-stdin") {
 		t.Fatalf("flagless result: %+v, %v", got, err)
 	}
+	tool := mustTool(t, r, "json")
+	_, err = r.Call(context.Background(), tool, map[string]any{"data": nil})
+	var invalid *ValidationError
+	if !errors.As(err, &invalid) {
+		t.Fatalf("null input accepted: %v", err)
+	}
 }
 
 func TestStdinIncompleteWrite(t *testing.T) {
