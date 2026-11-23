@@ -65,7 +65,8 @@ any language. The contract is one sentence: stdin JSON args in, stdout JSON
 result out, nonzero exit is an error with stderr as diagnostics.
 `examples/fn_notes.py` (with `examples/fn.json`) is a runnable one wired to
 `helpers/python/poo_fn.py` — a convenience; the contract needs nothing but a
-script that reads JSON from stdin and writes JSON to stdout:
+script that reads JSON from stdin and writes JSON to stdout (from the repo
+root, which the example's relative script path assumes):
 
 ```sh
 cli-registry run -registry examples/fn.json notes '{"data":{"op":"add","title":"x","body":"y"}}'
