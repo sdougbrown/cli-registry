@@ -12,7 +12,7 @@ properties. Each row:
 | Field | Type | Meaning |
 |---|---|---|
 | `property` | string | must match a top-level `inputSchema` property (exact correspondence; see below) |
-| `style` | enum | `equals` \| `space` \| `short` \| `positional` \| `stdin` |
+| `style` | enum | `equals` \| `space` \| `short` \| `positional` \| `stdin` \| `json` |
 | `flag` | string | flag text (required for `equals`/`space`/`short`); e.g. `--state` |
 | `short` | string | short flag (only for `short` style) |
 
@@ -65,6 +65,24 @@ Let `v` be the validated value for a bound property and `s` its schema type.
 - `Call` reports an incomplete input write when the command would otherwise
   succeed. When the command fails, its exit error takes precedence.
 
+### `json`
+- A concrete `object` or `array` property is serialized with JSON and supplies
+  the child's standard input, byte for byte. After the input is written, the
+  stream closes so the child can read to EOF. The input value appears in
+  argv nowhere.
+- `flag` is optional. When supplied, it is emitted as one argv element if and
+  only if the property is present. When the property is absent, stdin is
+  closed with no payload and the flag is omitted.
+- The kind must be a concrete `object` or `array`; branch kinds such as
+  `oneOf` are rejected at compile time.
+- At most one stdin or json binding per tool — both draw the one shared
+  stdin slot — and a second is rejected at compile time.
+- Key order is deterministic (sorted, per Go's JSON encoding). The schema's
+  constraints apply to the serialized value. This binding adds no byte
+  limit; callers and commands must enforce any limits they require.
+- The contract: stdin carries the JSON arguments, stdout carries the JSON
+  result, a nonzero exit is an error, and stderr carries the diagnostics.
+
 ## Scalar encoding
 
 | Schema type | argv string |
@@ -109,10 +127,13 @@ escape described above.
 ## Compile-time rejections (fail registry load, never silent)
 
 - `property` not in `inputSchema`, or top-level property with no binding (correspondence mismatch).
-- `object`/`other` type on any binding style (objects cannot be flattened to argv in v1).
+- `object`/`other` type on any binding style other than `json` (objects cannot be flattened to argv in v1).
 - `boolean` in `positional` style.
 - Unsupported `style` value.
 - Multiple stdin bindings, or a stdin binding on a non-string property.
+- A `json` binding on a property that is not a concrete `object` or `array`
+  (branch kinds such as `oneOf` included), or a second stdin-or-json binding
+  (one shared stdin slot).
 - Schema×style combos not enumerated above.
 
 ## Examples
@@ -132,4 +153,7 @@ escape described above.
 
 // stdin, enabled by a flag when the property is present
 { "style": "stdin", "property": "message", "flag": "--message-stdin" }
+
+// stdin, JSON-serialized object
+{ "style": "json", "property": "data", "flag": "--data-stdin" }
 ```
