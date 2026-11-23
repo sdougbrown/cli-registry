@@ -43,7 +43,7 @@ type tool struct {
 type binding struct {
 	property string
 	style    string // equals | space | short | positional | stdin | json
-	flag     string // flag text for equals, space, short, or stdin
+	flag     string // flag text for equals, space, short, stdin, or json
 }
 
 type outputConfig struct {
