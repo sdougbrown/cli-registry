@@ -63,7 +63,7 @@
 //	    Value     string // a literal, when Reference is false
 //	    From      string // what a reference points at
 //	    Reference bool   // true for a reference; From may be empty for `env:`
-//	    Scope     string // "" for an `env:NAME` host reference; "session" for `session:NAME`
+//	    Scope     string // "" for an `env:NAME` host reference; "session" or "scope" for a scoped reference
 //	}
 //	var BenignEnv []string        // variables Call copies from the host by default
 //
@@ -83,7 +83,8 @@
 // stays unresolved in Plan.Env, so the host decides which environment a
 // reference is resolved against. ResolveEnv applies BenignEnv, then the plan's
 // bindings, then WithEnv overrides, using the lookup it is given. A scoped
-// reference — a `session:NAME` value — stays unresolved the same way, and
+// reference — a `session:NAME` or `scope:NAME` value — stays unresolved the
+// same way, and
 // ResolveEnvScoped resolves it through a resolver the host passes, so the
 // library never learns what a session is; the host that knows it answers the
 // names the session's scope carries.

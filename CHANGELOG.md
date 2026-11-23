@@ -61,6 +61,10 @@ All notable changes to this project are recorded here. The format follows
   `Plan.ResolveEnv`, `Plan.ResolveEnvScoped` with a nil resolver, and `Call`
   without `WithScopedResolver` all refuse a scoped reference rather than
   passing one through unresolved.
+- **Breaking:** the same applies to the new `scope:` prefix — a manifest env
+  value that begins with `scope:` used to pass through as a literal (the
+  prefix did not exist); it is now a scoped reference that fails closed the
+  same way.
 
 - **Breaking:** unknown keys in a tool body now fail the load (a
   `*DefinitionError` naming the key, the tool, and the manifest file) instead

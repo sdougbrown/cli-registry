@@ -140,7 +140,8 @@ res, err := p.Finish(out) // classifies exactly like Call
 
 `Plan` touches no process and reads no environment, so an `env:NAME` reference
 resolves against whatever environment the host passes to `ResolveEnv`, not the
-process environment. A `session:NAME` value is a scoped reference: it stays
+process environment. A `session:NAME` or `scope:NAME` value is a scoped
+reference: it stays
 unresolved the same way, and `ResolveEnvScoped` resolves it through a resolver
 the host passes, so the reference can reach values only the host's session
 carries. `BenignEnv` lists the variables `Call` copies by default.
