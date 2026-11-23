@@ -86,6 +86,94 @@ func TestStdinBinding(t *testing.T) {
 	}
 }
 
+func TestJSONBinding(t *testing.T) {
+	r := fixtureRegistry(t, map[string]fixtureDef{
+		"json": {
+			env:        map[string]string{"GO_WANT_HELPER_PROCESS": "1", "FAKE_OUTPUT": "stdin"},
+			properties: map[string]any{"data": map[string]any{"type": "object", "additionalProperties": true}},
+			bindings:   []map[string]any{{"property": "data", "style": "json", "flag": "--data-stdin"}},
+		},
+		"json-array": {
+			env:        map[string]string{"GO_WANT_HELPER_PROCESS": "1", "FAKE_OUTPUT": "stdin"},
+			properties: map[string]any{"data": map[string]any{"type": "array"}},
+			bindings:   []map[string]any{{"property": "data", "style": "json", "flag": "--data-stdin"}},
+		},
+		"json-flagless": {
+			env:        map[string]string{"GO_WANT_HELPER_PROCESS": "1", "FAKE_OUTPUT": "stdin"},
+			properties: map[string]any{"data": map[string]any{"type": "object", "additionalProperties": true}},
+			bindings:   []map[string]any{{"property": "data", "style": "json"}},
+		},
+	})
+	for _, tc := range []struct {
+		name    string
+		tool    string
+		args    map[string]any
+		want    string
+		present bool
+	}{
+		{"absent", "json", map[string]any{}, "", false},
+		{"object", "json", map[string]any{"data": map[string]any{"b": 1, "a": "two"}}, `{"a":"two","b":1}`, true},
+		{"array", "json-array", map[string]any{"data": []any{"x", 2, true}}, `["x",2,true]`, true},
+	} {
+		tool := mustTool(t, r, tc.tool)
+		t.Run(tc.name, func(t *testing.T) {
+			p, err := r.Plan(tool, tc.args)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if (p.Stdin != nil) != tc.present || (p.Stdin != nil && *p.Stdin != tc.want) {
+				t.Fatalf("unexpected planned stdin: %v", p.Stdin)
+			}
+			// Pin Go's sorted-key determinism for the object case: the planned
+			// bytes must be exactly what json.Marshal produces, and the two-key
+			// sorted order is part of the contract.
+			if tc.name == "object" {
+				mb, merr := json.Marshal(map[string]any{"b": 1, "a": "two"})
+				if merr != nil {
+					t.Fatal(merr)
+				}
+				if p.Stdin == nil || *p.Stdin != string(mb) {
+					t.Fatalf("planned stdin %v, want Go marshal %q", p.Stdin, mb)
+				}
+			}
+			if slices.Contains(p.Argv, "--data-stdin") != tc.present {
+				t.Fatalf("argv: %q", p.Argv)
+			}
+			res, err := r.Call(context.Background(), tool, tc.args)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var got struct {
+				Input string   `json:"input"`
+				Args  []string `json:"args"`
+			}
+			if err := json.Unmarshal(res.Stdout, &got); err != nil {
+				t.Fatal(err)
+			}
+			if got.Input != tc.want || slices.Contains(got.Args, "--data-stdin") != tc.present {
+				t.Fatalf("child received %+v", got)
+			}
+		})
+	}
+	res, err := r.Call(context.Background(), mustTool(t, r, "json-flagless"), map[string]any{"data": map[string]any{"b": 1, "a": "two"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got struct {
+		Input string   `json:"input"`
+		Args  []string `json:"args"`
+	}
+	if err := json.Unmarshal(res.Stdout, &got); err != nil || got.Input != `{"a":"two","b":1}` || slices.Contains(got.Args, "--data-stdin") {
+		t.Fatalf("flagless result: %+v, %v", got, err)
+	}
+	tool := mustTool(t, r, "json")
+	_, err = r.Call(context.Background(), tool, map[string]any{"data": nil})
+	var invalid *ValidationError
+	if !errors.As(err, &invalid) {
+		t.Fatalf("null input accepted: %v", err)
+	}
+}
+
 func TestStdinIncompleteWrite(t *testing.T) {
 	r := fixtureRegistry(t, map[string]fixtureDef{
 		"early": {
@@ -145,6 +233,39 @@ func TestStdinBindingDefinitions(t *testing.T) {
 	}{
 		{"non-string", map[string]any{"data": map[string]any{"type": "integer"}}, []map[string]any{{"property": "data", "style": "stdin"}}},
 		{"multiple", map[string]any{"a": map[string]any{"type": "string"}, "b": map[string]any{"type": "string"}}, []map[string]any{{"property": "a", "style": "stdin"}, {"property": "b", "style": "stdin"}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			body := map[string]any{"description": "test", "command": []string{helperBin(t)}, "inputSchema": map[string]any{"type": "object", "properties": tc.properties, "additionalProperties": false}, "bindings": tc.bindings}
+			data, err := json.Marshal(map[string]any{"version": 1, "tools": map[string]any{"test": body}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(t.TempDir(), "registry.json")
+			if err := os.WriteFile(path, data, 0600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := Load(path); err == nil {
+				t.Fatal("invalid binding accepted")
+			}
+		})
+	}
+}
+
+func TestJSONBindingDefinitions(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		properties map[string]any
+		bindings   []map[string]any
+	}{
+		{"json-on-string", map[string]any{"data": map[string]any{"type": "string"}}, []map[string]any{{"property": "data", "style": "json"}}},
+		// A schema-valid tagged oneOf (the schema rejects untagged branches), so
+		// the rejection here comes from the binding guard, not the schema.
+		{"json-on-oneof", map[string]any{"data": map[string]any{"oneOf": []any{
+			map[string]any{"type": "object", "properties": map[string]any{"kind": map[string]any{"const": "obj"}}, "required": []any{"kind"}, "additionalProperties": false},
+			map[string]any{"type": "object", "properties": map[string]any{"kind": map[string]any{"const": "arr"}}, "required": []any{"kind"}, "additionalProperties": false},
+		}}}, []map[string]any{{"property": "data", "style": "json"}}},
+		{"stdin-and-json", map[string]any{"a": map[string]any{"type": "string"}, "b": map[string]any{"type": "object", "properties": map[string]any{}, "additionalProperties": false}}, []map[string]any{{"property": "a", "style": "stdin"}, {"property": "b", "style": "json"}}},
+		{"json-twice", map[string]any{"a": map[string]any{"type": "object", "properties": map[string]any{}, "additionalProperties": false}, "b": map[string]any{"type": "object", "properties": map[string]any{}, "additionalProperties": false}}, []map[string]any{{"property": "a", "style": "json"}, {"property": "b", "style": "json"}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			body := map[string]any{"description": "test", "command": []string{helperBin(t)}, "inputSchema": map[string]any{"type": "object", "properties": tc.properties, "additionalProperties": false}, "bindings": tc.bindings}

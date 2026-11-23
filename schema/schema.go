@@ -359,6 +359,16 @@ func (v *ValueSchema) StringProperty(name string) bool {
 	return p != nil && p.kind == kindString
 }
 
+// ObjectOrArrayProperty reports whether a top-level object property has
+// concrete object or array type.
+func (v *ValueSchema) ObjectOrArrayProperty(name string) bool {
+	if v.root == nil || v.root.kind != kindObject {
+		return false
+	}
+	p := v.root.properties[name]
+	return p != nil && (p.kind == kindObject || p.kind == kindArray)
+}
+
 func validateNode(n *node, value any, path string, issues *[]StructuralIssue) {
 	if n == nil {
 		return

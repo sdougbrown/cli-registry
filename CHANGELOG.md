@@ -8,6 +8,13 @@ All notable changes to this project are recorded here. The format follows
 
 ### Added
 
+- `json` binding style for `object`- and `array`-valued properties: the
+  value is serialized with JSON and supplied to the child's stdin, with the
+  schema's constraints applied and no added byte limit. At most one stdin
+  or json binding per tool (one shared stdin slot), a `json` binding on any
+  other kind — branch kinds such as `oneOf` included — is a compile-time
+  rejection, and key order is deterministic (sorted, per Go's JSON encoding).
+  `specs/argv.md` states the semantics.
 - `ParseEnvBinding(name, value string) EnvBinding`: the parse one manifest
   env entry goes through — `env:NAME` host reference, `session:NAME` scoped
   reference, anything else a literal. A host that reads manifests itself
