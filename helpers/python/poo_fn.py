@@ -2,17 +2,15 @@
 
 stdin JSON args in, stdout JSON result out, nonzero exit is an error with
 stderr as diagnostics. The helper does not validate arguments -- validation
-is the registry's job before spawn; the helper only reads stdin, dispatches,
-and writes the result.
+is the registry's job before spawn, and the manifest's `inputSchema` is the
+single schema declaration; the helper only reads stdin, dispatches, and
+writes the result.
 
 Usage:
 
     import poo_fn
 
-    @poo_fn.tool(
-        {"type": "object", "properties": {"a": {"type": "number"}}},
-        "Adds two numbers",
-    )
+    @poo_fn.tool("Adds two numbers")
     def add(a, b):
         return a + b
 
@@ -23,18 +21,19 @@ if __name__ == "__main__":
 import json
 import sys
 
-# Functions registered via @tool, keyed by name, with their declared
-# schema and description kept alongside for inspection.
+# Functions registered via @tool, keyed by name, with their description
+# kept alongside. The signature is the Python-level contract; argument
+# validation is the registry's job.
 TOOLS = {}
-METADATA = {}
 
 
-def tool(schema, description):
-    """Register the decorated function under its own name."""
+def tool(description):
+    """Register the function under its own name with just a description;
+    argument validation is the registry's job (the manifest's `inputSchema`).
+    """
 
     def decorator(fn):
-        TOOLS[fn.__name__] = fn
-        METADATA[fn.__name__] = {"schema": schema, "description": description}
+        TOOLS[fn.__name__] = {"fn": fn, "description": description}
         return fn
 
     return decorator
@@ -59,7 +58,7 @@ def main():
         sys.stderr.write("unknown op: %s\n" % op)
         sys.exit(1)
     try:
-        result = TOOLS[op](**args)
+        result = TOOLS[op]["fn"](**args)
     except Exception as exc:
         sys.stderr.write("%s: %s\n" % (type(exc).__name__, exc))
         sys.exit(1)

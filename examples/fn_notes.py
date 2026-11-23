@@ -17,10 +17,7 @@ NOTES = {}
 NEXT_ID = 1
 
 
-@poo_fn.tool(
-    {"type": "object", "properties": {"title": {"type": "string"}, "body": {"type": "string"}}},
-    "Add a note and return it with its new id",
-)
+@poo_fn.tool("Add a note and return it with its new id")
 def add(title, body):
     global NEXT_ID
     n = {"id": NEXT_ID, "title": title, "body": body}
@@ -29,20 +26,14 @@ def add(title, body):
     return n
 
 
-@poo_fn.tool(
-    {"type": "object", "properties": {"id": {"type": "number"}}},
-    "Fetch a note by id; a missing id is an error",
-)
+@poo_fn.tool("Fetch a note by id; a missing id is an error")
 def get(id):
     if id not in NOTES:
         raise KeyError("unknown id: %s" % id)
     return NOTES[id]
 
 
-@poo_fn.tool(
-    {"type": "object", "properties": {}},
-    "List all notes as {notes: [...]}",
-)
+@poo_fn.tool("List all notes as {notes: [...]}")
 def list():
     return {"notes": [NOTES[i] for i in sorted(NOTES)]}
 

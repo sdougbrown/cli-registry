@@ -64,9 +64,12 @@ The same machinery pre-registers a tool that isn't a CLI: a plain script in
 any language. The contract is one sentence: stdin JSON args in, stdout JSON
 result out, nonzero exit is an error with stderr as diagnostics.
 `examples/fn_notes.py` (with `examples/fn.json`) is a runnable one wired to
-`helpers/python/poo_fn.py` — a convenience; the contract needs nothing but a
-script that reads JSON from stdin and writes JSON to stdout (from the repo
-root, which the example's relative script path assumes):
+`helpers/python/poo_fn.py`: `@tool(description)` registers the functions and
+stores their descriptions, and the helper does no validation — the manifest's
+`inputSchema` is the one schema the registry enforces before spawn. The
+contract needs nothing but a script that reads JSON from stdin and writes
+JSON to stdout (from the repo root, which the example's relative script
+path assumes):
 
 ```sh
 cli-registry run -registry examples/fn.json notes '{"data":{"op":"add","title":"x","body":"y"}}'
