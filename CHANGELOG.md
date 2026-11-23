@@ -35,6 +35,14 @@ All notable changes to this project are recorded here. The format follows
   `Plan.Env` until the host resolves them. `Call` takes the same resolver
   through a new `WithScopedResolver` option; without it, a call of a tool
   whose manifest declares a scoped reference fails closed.
+- `helpers/python/poo_fn.py`: a stdlib-only Python (3.9+) helper for
+  fn-tool authors. `@tool(schema, description)` registers functions, and
+  `main()` reads the JSON args from stdin, dispatches on the `op` key, and
+  writes the JSON result to stdout. No argument validation — the registry
+  does that before spawn.
+- `examples/fn_notes.py` + `examples/fn.json`: a runnable in-memory notes
+  fn tool wiring the helper to the `json` binding style and
+  `output.mode: json`, with a manifest-load test.
 
 ### Changed
 
